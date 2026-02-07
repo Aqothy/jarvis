@@ -1,7 +1,8 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import type { Tool } from "@google/genai";
 import type { ActiveAppContext, TextPromptMode } from "../types";
 import { AppToneService } from "./app-tone-service";
+import { WeatherService } from "./weather-service";
 
 function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -32,7 +33,60 @@ function getGeminiTools(): Tool[] {
     {
       googleSearch: {},
     },
+    {
+      functionDeclarations: [
+        {
+          name: "get_weather",
+          description:
+            "Get current weather conditions and forecast for any location worldwide. Returns temperature (in Celsius), condition, high/low for the day. If no location is provided, uses the user's current location based on their IP address. Supports locations in Canada, USA, and all countries globally.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              location: {
+                type: Type.STRING,
+                description:
+                  "City name, ZIP/postal code, or coordinates. Supports worldwide locations. Examples: 'Toronto', 'Vancouver, Canada', 'Paris, France', 'M5V 3A8' (Toronto postal code), '43.65,-79.38' (coordinates). Leave empty to use current location.",
+              },
+              use_celsius: {
+                type: Type.BOOLEAN,
+                description: "Whether to return temperatures in Celsius. Default is true.",
+              },
+            },
+            required: [],
+          },
+        },
+      ],
+    },
   ];
+}
+
+/**
+ * Execute a function call from Gemini
+ */
+async function executeFunctionCall(
+  functionName: string,
+  args: Record<string, unknown>
+): Promise<string> {
+  console.log(`[Function Call] Executing ${functionName} with args:`, args);
+
+  if (functionName === "get_weather") {
+    const location = args.location as string | undefined;
+    const useCelsius = (args.use_celsius as boolean) ?? true;
+
+    try {
+      const weather = location
+        ? await WeatherService.getWeather(location, useCelsius)
+        : await WeatherService.getWeatherForCurrentLocation(useCelsius);
+
+      return WeatherService.formatWeather(weather, useCelsius);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error occurred";
+      return `Error getting weather: ${errorMessage}`;
+    }
+  }
+
+  return `Unknown function: ${functionName}`;
 }
 
 export async function transformText(params: {
@@ -111,7 +165,7 @@ export async function transformText(params: {
    *
    * High maxOutputTokens allows for longer document transformations if needed.
    */
-  const response = await client.models.generateContent({
+  let response = await client.models.generateContent({
     model,
     contents: userPrompt,
     config: {
@@ -122,6 +176,39 @@ export async function transformText(params: {
       temperature: toneProfile.temperature,
     },
   });
+
+  // Handle function calls if the model wants to use them
+  if (response.functionCalls && response.functionCalls.length > 0) {
+    console.log("[Function Calling] Model requested function calls");
+
+    // Execute all function calls
+    const functionResults = await Promise.all(
+      response.functionCalls.map(async (call) => {
+        const result = await executeFunctionCall(call.name || "unknown", call.args || {});
+        return {
+          name: call.name || "unknown",
+          response: { result },
+        };
+      })
+    );
+
+    // Send function results back to the model
+    response = await client.models.generateContent({
+      model,
+      contents: [
+        { role: "user", parts: [{ text: userPrompt }] },
+        { role: "model", parts: response.functionCalls.map((fc) => ({ functionCall: fc })) },
+        { role: "user", parts: functionResults.map((fr) => ({ functionResponse: fr })) },
+      ],
+      config: {
+        systemInstruction: systemPrompt,
+        tools: getGeminiTools(),
+        maxOutputTokens: 2048,
+        candidateCount: 1,
+        temperature: toneProfile.temperature,
+      },
+    });
+  }
 
   const text = typeof response.text === "string" ? response.text.trim() : "";
   if (text.length === 0) {
