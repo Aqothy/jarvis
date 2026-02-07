@@ -17,35 +17,6 @@ async function runAppleScript(script: string): Promise<string> {
   return stdout.trim();
 }
 
-export async function getActiveAppContext(): Promise<ActiveAppContext> {
-  const script = `
-    tell application "System Events"
-      set frontApp to first application process whose frontmost is true
-      set appName to name of frontApp
-      try
-        set windowTitle to name of front window of frontApp
-      on error
-        set windowTitle to ""
-      end try
-      return appName & "||" & windowTitle
-    end tell
-  `;
-
-  try {
-    const output = await runAppleScript(script);
-    const [name, windowTitle] = output.split("||");
-    return {
-      name: name || "Unknown",
-      windowTitle: windowTitle || ""
-    };
-  } catch {
-    return {
-      name: "Unknown",
-      windowTitle: ""
-    };
-  }
-}
-
 function snapshotClipboard(): { text: string; image: Electron.NativeImage } {
   return {
     text: clipboard.readText(),
@@ -65,55 +36,130 @@ function restoreClipboard(snapshot: { text: string; image: Electron.NativeImage 
   clipboard.writeText(snapshot.text);
 }
 
-export async function insertTextAtCursor(text: string): Promise<boolean> {
-  const priorClipboard = snapshotClipboard();
-  try {
-    clipboard.writeText(text);
-    await runAppleScript('tell application "System Events" to keystroke "v" using command down');
-    // Allow the target app time to read the clipboard before we restore it.
-    await delay(PASTE_SETTLE_MS);
-    return true;
-  } catch {
-    return false;
-  } finally {
-    restoreClipboard(priorClipboard);
+/**
+ * macOS-specific service for window detection and text insertion
+ */
+export class MacOSService {
+  static async getActiveAppContext(): Promise<ActiveAppContext> {
+    const script = `
+      tell application "System Events"
+        set frontApp to first application process whose frontmost is true
+        set appName to name of frontApp
+        try
+          set windowTitle to name of front window of frontApp
+        on error
+          set windowTitle to ""
+        end try
+        return appName & "||" & windowTitle
+      end tell
+    `;
+
+    try {
+      const output = await runAppleScript(script);
+      const [name, windowTitle] = output.split("||");
+      return {
+        name: name || "Unknown",
+        windowTitle: windowTitle || ""
+      };
+    } catch {
+      return {
+        name: "Unknown",
+        windowTitle: ""
+      };
+    }
   }
+
+  static async insertTextAtCursor(text: string): Promise<boolean> {
+    const priorClipboard = snapshotClipboard();
+    try {
+      clipboard.writeText(text);
+      await runAppleScript('tell application "System Events" to keystroke "v" using command down');
+      // Allow the target app time to read the clipboard before we restore it.
+      await delay(PASTE_SETTLE_MS);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      restoreClipboard(priorClipboard);
+    }
+  }
+
+  static getAccessibilityPermissionStatus(): boolean {
+    if (process.platform !== "darwin") {
+      return true;
+    }
+    return systemPreferences.isTrustedAccessibilityClient(false);
+  }
+
+  static requestAccessibilityPermission(): boolean {
+    if (process.platform !== "darwin") {
+      return true;
+    }
+    return systemPreferences.isTrustedAccessibilityClient(true);
+  }
+
+  static clipboardHasImage(): boolean {
+    return !clipboard.readImage().isEmpty();
+  }
+
+  static readClipboardText(): string {
+    return clipboard.readText();
+  }
+
+  static readClipboardImage(): Electron.NativeImage {
+    return clipboard.readImage();
+  }
+
+  static writeClipboardText(text: string): void {
+    clipboard.writeText(text);
+  }
+
+  static writeClipboardImage(image: Electron.NativeImage): void {
+    clipboard.writeImage(image);
+  }
+
+  static createImageFromBuffer(buffer: Buffer): Electron.NativeImage {
+    return nativeImage.createFromBuffer(buffer);
+  }
+}
+
+// Export legacy functions for backward compatibility
+export async function getActiveAppContext(): Promise<ActiveAppContext> {
+  return MacOSService.getActiveAppContext();
+}
+
+export async function insertTextAtCursor(text: string): Promise<boolean> {
+  return MacOSService.insertTextAtCursor(text);
 }
 
 export function getAccessibilityPermissionStatus(): boolean {
-  if (process.platform !== "darwin") {
-    return true;
-  }
-  return systemPreferences.isTrustedAccessibilityClient(false);
+  return MacOSService.getAccessibilityPermissionStatus();
 }
 
 export function requestAccessibilityPermission(): boolean {
-  if (process.platform !== "darwin") {
-    return true;
-  }
-  return systemPreferences.isTrustedAccessibilityClient(true);
+  return MacOSService.requestAccessibilityPermission();
 }
 
 export function clipboardHasImage(): boolean {
-  return !clipboard.readImage().isEmpty();
+  return MacOSService.clipboardHasImage();
 }
 
 export function readClipboardText(): string {
-  return clipboard.readText();
+  return MacOSService.readClipboardText();
 }
 
 export function readClipboardImage(): Electron.NativeImage {
-  return clipboard.readImage();
+  return MacOSService.readClipboardImage();
 }
 
 export function writeClipboardText(text: string): void {
-  clipboard.writeText(text);
+  return MacOSService.writeClipboardText(text);
 }
 
 export function writeClipboardImage(image: Electron.NativeImage): void {
-  clipboard.writeImage(image);
+  return MacOSService.writeClipboardImage(image);
 }
 
 export function createImageFromBuffer(buffer: Buffer): Electron.NativeImage {
-  return nativeImage.createFromBuffer(buffer);
+  return MacOSService.createImageFromBuffer(buffer);
 }

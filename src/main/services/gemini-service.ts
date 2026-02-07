@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { ActiveAppContext } from "../types";
+import { AppToneService } from "./app-tone-service";
 
 function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -32,8 +33,28 @@ export async function transformText(params: {
 }): Promise<string> {
   const client = getGeminiClient();
   const model = getGeminiTextModel();
-  const systemPrompt =
-    "You rewrite clipboard text for desktop workflows. fulfill the user's prompt based on the instruction and source text. The active app and window title may provide useful context for rewriting the text, but do not reference them directly in the output.";
+
+  // Get tone profile based on active application
+  const toneProfile = AppToneService.getToneProfile(
+    params.activeApp.name,
+    params.activeApp.windowTitle
+  );
+
+  // Log tone detection for debugging
+  const rationale = AppToneService.getToneRationale(
+    params.activeApp.name,
+    params.activeApp.windowTitle
+  );
+  console.log(`[Tone Detection] Using "${toneProfile.name}" tone: ${rationale}`);
+
+  // Build system prompt with tone-specific guidance
+  const systemPrompt = [
+    "You rewrite clipboard text for desktop workflows. Fulfill the user's prompt based on the instruction and source text.",
+    "The active app and window title may provide useful context for rewriting the text, but do not reference them directly in the output.",
+    "",
+    `TONE GUIDANCE: ${toneProfile.systemPromptHint}`,
+  ].join("\n");
+
   const userPrompt = [
     `Instruction: ${params.instruction}`,
     `Active app: ${params.activeApp.name}`,
@@ -44,8 +65,12 @@ export async function transformText(params: {
   ].join("\n");
 
   /**
-   * We use a low temperature (0.2) to ensure high consistency and accuracy in the rewrite.
-   * High maxOutputTokens allows for longer document transformations if needed.
+   * Temperature is adjusted based on the detected tone:
+   * - Technical: 0.1 (very consistent, precise)
+   * - Formal: 0.2 (consistent, professional)
+   * - Neutral: 0.3 (balanced)
+   * - Casual: 0.4 (more natural, conversational)
+   * - Creative: 0.6 (more varied, expressive)
    */
   const response = await client.models.generateContent({
     model,
@@ -54,8 +79,8 @@ export async function transformText(params: {
       systemInstruction: systemPrompt,
       maxOutputTokens: 2048,
       candidateCount: 1,
-      temperature: 0.2
-    }
+      temperature: toneProfile.temperature,
+    },
   });
 
   const text = typeof response.text === "string" ? response.text.trim() : "";
