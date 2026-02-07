@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import type { Tool } from "@google/genai";
 import type { ActiveAppContext } from "../types";
 
 function getGeminiApiKey(): string {
@@ -25,6 +26,14 @@ function getGeminiClient(): GoogleGenAI {
   return cachedClient;
 }
 
+function getGeminiTools(): Tool[] {
+  return [
+    {
+      googleSearch: {},
+    },
+  ];
+}
+
 export async function transformText(params: {
   instruction: string;
   sourceText: string;
@@ -33,7 +42,7 @@ export async function transformText(params: {
   const client = getGeminiClient();
   const model = getGeminiTextModel();
   const systemPrompt =
-    "You rewrite clipboard text for desktop workflows. fulfill the user's prompt based on the instruction and source text. The active app and window title may provide useful context for rewriting the text, but do not reference them directly in the output.";
+    "You are Jarvis, a virtual assistant that works anywhere. You rewrite clipboard text for desktop workflows. Fulfill the user's prompt based on the instruction and source text. The active app and window title may provide useful context for rewriting the text, but do not reference them directly in the output. Use Google Search only when the user request needs fresh/external facts or you are uncertain. If the request is a pure rewrite/transform of the provided clipboard text, do not use search.";
   const userPrompt = [
     `Instruction: ${params.instruction}`,
     `Active app: ${params.activeApp.name}`,
@@ -52,10 +61,10 @@ export async function transformText(params: {
     contents: userPrompt,
     config: {
       systemInstruction: systemPrompt,
+      tools: getGeminiTools(),
       maxOutputTokens: 2048,
       candidateCount: 1,
-      temperature: 0.2
-    }
+    },
   });
 
   const text = typeof response.text === "string" ? response.text.trim() : "";
