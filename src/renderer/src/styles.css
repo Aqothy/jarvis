@@ -150,6 +150,100 @@ button:hover {
   color: var(--muted);
 }
 
+.memory-panel {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+
+.memory-panel h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.memory-hint {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.memory-create {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.memory-create textarea,
+.memory-item textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: #0d1115;
+  color: var(--text);
+  padding: 0.6rem;
+  resize: vertical;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.memory-create-controls,
+.memory-item-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.memory-create-controls select,
+.memory-item-controls select {
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  background: #0d1115;
+  color: var(--text);
+  padding: 0.45rem 0.55rem;
+  font-size: 0.85rem;
+}
+
+.memory-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.memory-item {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.memory-empty {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.memory-pin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.memory-item button,
+.memory-create button {
+  flex: 0 0 auto;
+}
+
+button.danger {
+  border-color: rgba(255, 135, 135, 0.5);
+  color: #ff8787;
+}
+
 pre {
   margin: 0;
   padding: 1rem;

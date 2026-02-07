@@ -12,6 +12,7 @@ import {
 
 interface CaptureContextOptions {
   persistClipboardImage?: boolean;
+  includeClipboard?: boolean;
 }
 
 function getArtifactDir(): string {
@@ -67,6 +68,15 @@ export async function captureContextSnapshot(
   options?: CaptureContextOptions,
 ): Promise<ContextSnapshot> {
   const activeApp = await getActiveAppContext();
+  if (options?.includeClipboard === false) {
+    return {
+      timestamp: new Date().toISOString(),
+      activeApp,
+      clipboard: { kind: "none" },
+      sourceUsed: "none",
+    };
+  }
+
   const clipboardText = readClipboardText();
   const clipboardImage = readClipboardImage();
   const hasImage = !clipboardImage.isEmpty();

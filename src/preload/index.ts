@@ -2,14 +2,17 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../main/ipc-channels";
 import type {
   AppBridge,
+  CreateMemoryRequest,
   ContextSnapshot,
   InsertTextAtCursorResult,
   ImageTaskRequest,
   ImageTaskResult,
+  MemoryEntry,
   PermissionStatus,
   TextTaskRequest,
   TextTaskResult,
   TranscriptionResult,
+  UpdateMemoryRequest,
 } from "../main/types";
 
 /**
@@ -46,6 +49,18 @@ const api: AppBridge = {
 
   runImageTask: (request: ImageTaskRequest): Promise<ImageTaskResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.runImageTask, request),
+
+  listMemories: (): Promise<MemoryEntry[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memoryList),
+
+  createMemory: (request: CreateMemoryRequest): Promise<MemoryEntry> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memoryCreate, request),
+
+  updateMemory: (request: UpdateMemoryRequest): Promise<MemoryEntry> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memoryUpdate, request),
+
+  deleteMemory: (id: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memoryDelete, id),
 
   onPushToTalkShortcut: (listener: () => void): (() => void) => {
     // Strip the IPC event argument so the renderer only sees a clean callback.

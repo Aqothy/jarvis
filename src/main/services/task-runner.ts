@@ -8,22 +8,27 @@ import type {
   TextDeliveryMode,
   TextPromptMode,
   TextTaskRequest,
-  TextTaskResult
+  TextTaskResult,
 } from "../types";
 import { captureContextSnapshot } from "./context-service";
 import {
   createImageFromBuffer,
   insertTextAtCursor,
   writeClipboardImage,
-  writeClipboardText
+  writeClipboardText,
 } from "./macos-service";
+import { createMemory, getMemoryPromptContextForQuery } from "./memory-service";
 import { transformClipboardImage } from "./openai-service";
-import { transformText } from "./gemini-service";
+import { cleanMemoryCandidate, transformText } from "./gemini-service";
 
 interface TextTaskPlan {
   promptMode: TextPromptMode;
   deliveryMode: TextDeliveryMode;
   requiresClipboardText: boolean;
+}
+
+interface MemoryAddCommand {
+  content: string;
 }
 
 function getOutputDir(): string {
@@ -54,7 +59,7 @@ function hasExplicitClipboardReference(instruction: string): boolean {
     /\btext above\b/,
     /\btext below\b/,
     /\bthe above text\b/,
-    /\bthe below text\b/
+    /\bthe below text\b/,
   ];
 
   return explicitClipboardPatterns.some((pattern) => pattern.test(instruction));
@@ -66,12 +71,66 @@ function normalizeInstruction(instruction: string): string {
 
 function stripAssistantLeadIn(instruction: string): string {
   return instruction
-    .replace(/^(hey|hi|yo)\s+(jarvis[,!\s]*)?/, "")
-    .replace(/^(can|could|would|will)\s+you\s+/, "")
-    .replace(/^please\s+/, "")
-    .replace(/^i need you to\s+/, "")
-    .replace(/^help me\s+/, "help me ")
+    .replace(/^(hey|hi|yo)\s+(jarvis[,!\s]*)?/i, "")
+    .replace(/^(can|could|would|will)\s+you\s+/i, "")
+    .replace(/^please\s+/i, "")
+    .replace(/^i need you to\s+/i, "")
+    .replace(/^help me\s+/i, "help me ")
     .trim();
+}
+
+function cleanExtractedMemoryContent(content: string): string {
+  return content
+    .trim()
+    .replace(/^(that|this|it)\s+/i, "")
+    .replace(/[.,;:!?]+$/g, "")
+    .trim();
+}
+
+function hasExplicitMemoryTarget(instruction: string): boolean {
+  return /\b(?:to|in(?:to)?)\s+(?:your\s+)?memory\b/i.test(instruction);
+}
+
+function extractMemoryAddCommand(instruction: string): MemoryAddCommand | null {
+  const cleanedInstruction = stripAssistantLeadIn(instruction.trim());
+  if (cleanedInstruction.length === 0) {
+    return null;
+  }
+
+  if (!hasExplicitMemoryTarget(cleanedInstruction)) {
+    return null;
+  }
+
+  const patterns = [
+    /^(.+?)[,.\s]+(?:add|save|remember)\s+(?:that|this|it)?\s*(?:to|in(?:to)?)\s+(?:your\s+)?memory[.!?]*$/i,
+    /^(?:add|save|remember)\s+(.+?)\s+(?:to|in(?:to)?)\s+(?:your\s+)?memory[.!?]*$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(cleanedInstruction);
+    if (!match || typeof match[1] !== "string") {
+      continue;
+    }
+
+    const extractedContent = cleanExtractedMemoryContent(
+      match[1]
+        .trim()
+        .replace(/^(hey|hi|yo)\s+jarvis[,!\s]*/i, "")
+        .replace(/^(can|could|would|will)\s+you\s+/i, "")
+        .replace(/^please\s+/i, "")
+        .trim(),
+    );
+
+    if (extractedContent.length === 0) {
+      continue;
+    }
+
+    return {
+      content: extractedContent,
+    };
+  }
+
+  return null;
 }
 
 function resolveTextTaskPlan(instruction: string): TextTaskPlan {
@@ -80,48 +139,55 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
     return {
       promptMode: "dictation_cleanup",
       deliveryMode: "insert",
-      requiresClipboardText: false
+      requiresClipboardText: false,
     };
   }
 
   const routedInstruction = stripAssistantLeadIn(normalizedInstruction);
 
-  const startsWithTransformVerb = /^(rewrite|rephrase|paraphrase|proofread|edit|polish|fix|improve|shorten|expand|translate|summarize)\b/.test(
-    routedInstruction,
-  );
-  const startsWithExplainVerb = /^(explain|analyze|interpret|critique|help me understand|what does|what is)\b/.test(
-    routedInstruction,
-  );
-  const startsWithDirectQueryVerb = /^(research|explain|analyze|what|who|when|where|why|how|compare|list|find|tell me)\b/.test(
-    routedInstruction,
-  );
-  const startsWithGenerationVerb = /^(write|draft|compose|generate|create)\b/.test(
-    routedInstruction,
-  );
-  const referencesLocalText = /\b(this|it|text|paragraph|sentence|message|email|draft)\b/.test(
-    routedInstruction,
-  );
-  const explicitClipboardReference = hasExplicitClipboardReference(normalizedInstruction);
-  const hasAssistantRequestCue = /\b(can|could|would|will)\s+you\b|\bplease\b|\bi need you to\b|\bhelp me\b/.test(
+  const startsWithTransformVerb =
+    /^(rewrite|rephrase|paraphrase|proofread|edit|polish|fix|improve|shorten|expand|translate|summarize)\b/.test(
+      routedInstruction,
+    );
+  const startsWithExplainVerb =
+    /^(explain|analyze|interpret|critique|help me understand|what does|what is|what'?s)\b/.test(
+      routedInstruction,
+    );
+  const startsWithDirectQueryVerb =
+    /^(research|explain|analyze|what|what'?s|who|when|where|why|how|compare|list|find|tell me)\b/.test(
+      routedInstruction,
+    );
+  const startsWithGenerationVerb =
+    /^(write|draft|compose|generate|create)\b/.test(routedInstruction);
+  const referencesLocalText =
+    /\b(this|it|text|paragraph|sentence|message|email|draft)\b/.test(
+      routedInstruction,
+    );
+  const explicitClipboardReference = hasExplicitClipboardReference(
     normalizedInstruction,
   );
-  const hasDirectQueryKeyword = /\b(explain|analyze|interpret|critique|research|compare|list|find|tell me|what is|what does|what are|who|when|where|why|how)\b/.test(
-    normalizedInstruction,
-  );
+  const hasAssistantRequestCue =
+    /\b(can|could|would|will)\s+you\b|\bplease\b|\bi need you to\b|\bhelp me\b/.test(
+      normalizedInstruction,
+    );
+  const hasDirectQueryKeyword =
+    /\b(explain|analyze|interpret|critique|research|compare|list|find|tell me|what is|what does|what are|what'?s|who|when|where|why|how)\b/.test(
+      normalizedInstruction,
+    );
 
   if (explicitClipboardReference || referencesLocalText) {
     if (startsWithExplainVerb) {
       return {
         promptMode: "clipboard_explain",
         deliveryMode: "clipboard",
-        requiresClipboardText: true
+        requiresClipboardText: true,
       };
     }
 
     return {
       promptMode: "clipboard_rewrite",
       deliveryMode: "insert",
-      requiresClipboardText: true
+      requiresClipboardText: true,
     };
   }
 
@@ -129,7 +195,7 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
     return {
       promptMode: "direct_query",
       deliveryMode: "insert",
-      requiresClipboardText: false
+      requiresClipboardText: false,
     };
   }
 
@@ -137,7 +203,7 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
     return {
       promptMode: "direct_query",
       deliveryMode: "insert",
-      requiresClipboardText: false
+      requiresClipboardText: false,
     };
   }
 
@@ -145,7 +211,7 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
     return {
       promptMode: "direct_query",
       deliveryMode: "clipboard",
-      requiresClipboardText: false
+      requiresClipboardText: false,
     };
   }
 
@@ -153,14 +219,14 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
     return {
       promptMode: "direct_query",
       deliveryMode: "clipboard",
-      requiresClipboardText: false
+      requiresClipboardText: false,
     };
   }
 
   return {
     promptMode: "dictation_cleanup",
     deliveryMode: "insert",
-    requiresClipboardText: false
+    requiresClipboardText: false,
   };
 }
 
@@ -171,8 +237,64 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
  * 3. Send context to Gemini based on the selected mode.
  * 4. Insert at cursor or copy to clipboard based on delivery mode.
  */
-export async function runTextTask(request: TextTaskRequest): Promise<TextTaskResult> {
-  const context = await captureContextSnapshot({ persistClipboardImage: false });
+export async function runTextTask(
+  request: TextTaskRequest,
+): Promise<TextTaskResult> {
+  const memoryAddCommand =
+    request.mode === "force_dictation"
+      ? null
+      : extractMemoryAddCommand(request.instruction);
+
+  if (memoryAddCommand) {
+    const context = await captureContextSnapshot({
+      persistClipboardImage: false,
+      includeClipboard: false,
+    });
+
+    const cleanedMemory = await cleanMemoryCandidate({
+      instruction: request.instruction,
+      candidate: memoryAddCommand.content,
+      activeApp: context.activeApp,
+    });
+
+    if (!cleanedMemory.shouldSave) {
+      notify("Jarvis", "Could not save memory. Try phrasing it more clearly.");
+      return {
+        context,
+        sourceText: "",
+        transformedText: "Memory was not saved.",
+        promptMode: "direct_query",
+        deliveryMode: "none",
+        memoryUpdated: false,
+        inserted: false,
+        copiedToClipboard: false,
+        fallbackCopiedToClipboard: false,
+      };
+    }
+
+    createMemory({
+      content: cleanedMemory.cleanedMemory,
+      kind: cleanedMemory.kind,
+      source: "explicit_voice",
+    });
+    notify("Jarvis", "Saved to memory.");
+
+    return {
+      context,
+      sourceText: "",
+      transformedText: `Saved to memory: ${cleanedMemory.cleanedMemory}`,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      memoryUpdated: true,
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+    };
+  }
+
+  const context = await captureContextSnapshot({
+    persistClipboardImage: false,
+  });
   const plan =
     request.mode === "force_dictation"
       ? {
@@ -182,11 +304,19 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
         }
       : resolveTextTaskPlan(request.instruction);
   let sourceText = "";
+  const memoryContext =
+    plan.promptMode === "dictation_cleanup"
+      ? []
+      : getMemoryPromptContextForQuery({
+          query: request.instruction,
+        });
 
   if (plan.requiresClipboardText) {
     sourceText = context.clipboard.text?.text ?? "";
     if (sourceText.trim().length === 0) {
-      throw new Error("No clipboard text found. Copy text to clipboard, then retry.");
+      throw new Error(
+        "No clipboard text found. Copy text to clipboard, then retry.",
+      );
     }
   }
 
@@ -194,7 +324,8 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
     instruction: request.instruction,
     sourceText,
     activeApp: context.activeApp,
-    mode: plan.promptMode
+    mode: plan.promptMode,
+    memoryContext,
   });
 
   let inserted = false;
@@ -222,9 +353,10 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
     transformedText,
     promptMode: plan.promptMode,
     deliveryMode: plan.deliveryMode,
+    memoryUpdated: false,
     inserted,
     copiedToClipboard,
-    fallbackCopiedToClipboard
+    fallbackCopiedToClipboard,
   };
 }
 
@@ -234,28 +366,35 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
  * 2. Send image and instructions to OpenAI DALL-E (edits).
  * 3. Put the result back in the clipboard and notify the user.
  */
-export async function runImageTask(request: ImageTaskRequest): Promise<ImageTaskResult> {
+export async function runImageTask(
+  request: ImageTaskRequest,
+): Promise<ImageTaskResult> {
   const context = await captureContextSnapshot({ persistClipboardImage: true });
   if (context.clipboard.kind !== "image" || !context.clipboard.imagePath) {
-    throw new Error("No clipboard image found. Copy an image to clipboard, then retry.");
+    throw new Error(
+      "No clipboard image found. Copy an image to clipboard, then retry.",
+    );
   }
 
   const outputBuffer = await transformClipboardImage({
     imagePath: context.clipboard.imagePath,
-    instruction: request.instruction
+    instruction: request.instruction,
   });
 
   const image = createImageFromBuffer(outputBuffer);
   writeClipboardImage(image);
 
   await ensureOutputDir();
-  const outputImagePath = join(getOutputDir(), `image-output-${Date.now()}-${randomUUID()}.png`);
+  const outputImagePath = join(
+    getOutputDir(),
+    `image-output-${Date.now()}-${randomUUID()}.png`,
+  );
   await writeFile(outputImagePath, outputBuffer);
 
   notify("Jarvis", "Image ready to paste.");
 
   return {
     context,
-    outputImagePath
+    outputImagePath,
   };
 }
