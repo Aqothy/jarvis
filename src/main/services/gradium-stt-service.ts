@@ -1,5 +1,9 @@
 import WebSocket, { RawData } from "ws";
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface GradiumServerMessage {
   type?: string;
   text?: string;
@@ -10,21 +14,31 @@ interface GradiumServerMessage {
 interface SttSession {
   socket: WebSocket;
   ready: boolean;
-  readySettled: boolean;
-  completionSettled: boolean;
   stopRequested: boolean;
   transcriptSegments: string[];
   pendingAudioChunks: string[];
   error: Error | null;
+  /** Resolves once the server sends a "ready" message. */
   readyPromise: Promise<void>;
+  /** Resolves with the final transcript once the session ends. */
   completionPromise: Promise<string>;
   resolveReady: () => void;
   rejectReady: (reason: Error) => void;
   resolveCompletion: (transcript: string) => void;
   rejectCompletion: (reason: Error) => void;
+  readySettled: boolean;
+  completionSettled: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Module state
+// ---------------------------------------------------------------------------
+
 let activeSession: SttSession | null = null;
+
+// ---------------------------------------------------------------------------
+// Config helpers
+// ---------------------------------------------------------------------------
 
 function getGradiumApiKey(): string {
   const key = process.env.GRADIUM_API_KEY;
@@ -36,43 +50,39 @@ function getGradiumApiKey(): string {
 
 function getGradiumEndpoint(): string {
   const region = (process.env.GRADIUM_STT_REGION || "us").toLowerCase();
-  return region === "eu" ? "wss://eu.api.gradium.ai/api/speech/asr" : "wss://us.api.gradium.ai/api/speech/asr";
+  return region === "eu"
+    ? "wss://eu.api.gradium.ai/api/speech/asr"
+    : "wss://us.api.gradium.ai/api/speech/asr";
 }
 
 function getGradiumModelName(): string {
   return process.env.GRADIUM_STT_MODEL || "default";
 }
 
-function settleReady(session: SttSession): void {
-  if (session.readySettled) {
-    return;
-  }
-  session.readySettled = true;
-  session.resolveReady();
-}
+// ---------------------------------------------------------------------------
+// Session lifecycle helpers
+// ---------------------------------------------------------------------------
 
-function rejectReady(session: SttSession, error: Error): void {
-  if (session.readySettled) {
-    return;
-  }
-  session.readySettled = true;
-  session.rejectReady(error);
-}
+/** Safely resolve/reject a one-shot deferred, ignoring duplicate calls. */
+function settleOnce<T>(
+  session: SttSession,
+  field: "ready" | "completion",
+  action: "resolve" | "reject",
+  value: T,
+): void {
+  const settledKey = field === "ready" ? "readySettled" : "completionSettled";
+  if (session[settledKey]) return;
+  session[settledKey] = true;
 
-function settleCompletion(session: SttSession, transcript: string): void {
-  if (session.completionSettled) {
-    return;
+  if (field === "ready") {
+    action === "resolve"
+      ? session.resolveReady()
+      : session.rejectReady(value as Error);
+  } else {
+    action === "resolve"
+      ? session.resolveCompletion(value as string)
+      : session.rejectCompletion(value as Error);
   }
-  session.completionSettled = true;
-  session.resolveCompletion(transcript);
-}
-
-function rejectCompletion(session: SttSession, error: Error): void {
-  if (session.completionSettled) {
-    return;
-  }
-  session.completionSettled = true;
-  session.rejectCompletion(error);
 }
 
 function cleanupSession(session: SttSession): void {
@@ -85,10 +95,11 @@ function failSession(session: SttSession, error: Error): void {
   if (!session.error) {
     session.error = error;
   }
-  rejectReady(session, error);
-  rejectCompletion(session, error);
+  settleOnce(session, "ready", "reject", error);
+  settleOnce(session, "completion", "reject", error);
   try {
-    if (session.socket.readyState === WebSocket.OPEN || session.socket.readyState === WebSocket.CONNECTING) {
+    const { readyState } = session.socket;
+    if (readyState === WebSocket.OPEN || readyState === WebSocket.CONNECTING) {
       session.socket.close();
     }
   } finally {
@@ -97,64 +108,72 @@ function failSession(session: SttSession, error: Error): void {
 }
 
 function flushPendingAudio(session: SttSession): void {
-  if (!session.ready || session.socket.readyState !== WebSocket.OPEN) {
-    return;
-  }
+  if (!session.ready || session.socket.readyState !== WebSocket.OPEN) return;
+
   while (session.pendingAudioChunks.length > 0) {
-    const chunk = session.pendingAudioChunks.shift();
-    if (!chunk) {
-      continue;
-    }
+    const chunk = session.pendingAudioChunks.shift()!;
     session.socket.send(JSON.stringify({ type: "audio", audio: chunk }));
   }
 }
 
+function buildTranscript(session: SttSession): string {
+  return session.transcriptSegments.join(" ").trim();
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket message handler
+// ---------------------------------------------------------------------------
+
 function handleMessage(session: SttSession, raw: RawData): void {
   let parsed: GradiumServerMessage;
   try {
-    const text = typeof raw === "string" ? raw : raw.toString("utf8");
-    parsed = JSON.parse(text) as GradiumServerMessage;
+    parsed = JSON.parse(String(raw)) as GradiumServerMessage;
   } catch {
-    return;
+    return; // Ignore unparseable frames.
   }
 
-  if (parsed.type === "ready") {
-    session.ready = true;
-    settleReady(session);
-    flushPendingAudio(session);
-    if (session.stopRequested && session.socket.readyState === WebSocket.OPEN) {
-      session.socket.send(JSON.stringify({ type: "end_of_stream" }));
-    }
-    return;
-  }
-
-  if (parsed.type === "text") {
-    const segment = typeof parsed.text === "string" ? parsed.text.trim() : "";
-    if (segment.length > 0) {
-      const last = session.transcriptSegments[session.transcriptSegments.length - 1];
-      if (last !== segment) {
-        session.transcriptSegments.push(segment);
+  switch (parsed.type) {
+    case "ready":
+      session.ready = true;
+      settleOnce(session, "ready", "resolve", undefined);
+      flushPendingAudio(session);
+      // If stop was requested before the socket became ready, signal end now.
+      if (session.stopRequested && session.socket.readyState === WebSocket.OPEN) {
+        session.socket.send(JSON.stringify({ type: "end_of_stream" }));
       }
-    }
-    return;
-  }
+      break;
 
-  if (parsed.type === "error") {
-    const message = typeof parsed.message === "string" ? parsed.message : "Unknown Gradium STT error";
-    const codeSuffix = typeof parsed.code === "number" ? ` (code ${parsed.code})` : "";
-    failSession(session, new Error(`Gradium STT failed${codeSuffix}: ${message}`));
-    return;
-  }
-
-  if (parsed.type === "end_of_stream") {
-    const transcript = session.transcriptSegments.join(" ").trim();
-    settleCompletion(session, transcript);
-    cleanupSession(session);
-    if (session.socket.readyState === WebSocket.OPEN || session.socket.readyState === WebSocket.CONNECTING) {
-      session.socket.close();
+    case "text": {
+      const segment = typeof parsed.text === "string" ? parsed.text.trim() : "";
+      if (segment.length > 0) {
+        const last = session.transcriptSegments[session.transcriptSegments.length - 1];
+        if (last !== segment) {
+          session.transcriptSegments.push(segment);
+        }
+      }
+      break;
     }
+
+    case "error": {
+      const msg = typeof parsed.message === "string" ? parsed.message : "Unknown Gradium STT error";
+      const suffix = typeof parsed.code === "number" ? ` (code ${parsed.code})` : "";
+      failSession(session, new Error(`Gradium STT failed${suffix}: ${msg}`));
+      break;
+    }
+
+    case "end_of_stream":
+      settleOnce(session, "completion", "resolve", buildTranscript(session));
+      cleanupSession(session);
+      if (session.socket.readyState === WebSocket.OPEN || session.socket.readyState === WebSocket.CONNECTING) {
+        session.socket.close();
+      }
+      break;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 function getActiveSession(): SttSession {
   if (!activeSession) {
@@ -171,25 +190,24 @@ export async function startGradiumSttSession(): Promise<void> {
   const apiKey = getGradiumApiKey();
   const endpoint = getGradiumEndpoint();
 
-  let resolveReady = (): void => undefined;
-  let rejectReady = (_reason: Error): void => undefined;
-  let resolveCompletion = (_transcript: string): void => undefined;
-  let rejectCompletion = (_reason: Error): void => undefined;
+  // Build one-shot deferreds for ready and completion signals.
+  let resolveReady!: () => void;
+  let rejectReady!: (reason: Error) => void;
+  let resolveCompletion!: (transcript: string) => void;
+  let rejectCompletion!: (reason: Error) => void;
 
-  const readyPromise = new Promise<void>((resolve, reject) => {
-    resolveReady = resolve;
-    rejectReady = reject;
+  const readyPromise = new Promise<void>((res, rej) => {
+    resolveReady = res;
+    rejectReady = rej;
   });
 
-  const completionPromise = new Promise<string>((resolve, reject) => {
-    resolveCompletion = resolve;
-    rejectCompletion = reject;
+  const completionPromise = new Promise<string>((res, rej) => {
+    resolveCompletion = res;
+    rejectCompletion = rej;
   });
 
   const socket = new WebSocket(endpoint, {
-    headers: {
-      "x-api-key": apiKey
-    }
+    headers: { "x-api-key": apiKey },
   });
 
   const session: SttSession = {
@@ -206,11 +224,12 @@ export async function startGradiumSttSession(): Promise<void> {
     resolveReady,
     rejectReady,
     resolveCompletion,
-    rejectCompletion
+    rejectCompletion,
   };
 
-  session.readyPromise.catch(() => undefined);
-  session.completionPromise.catch(() => undefined);
+  // Prevent unhandled rejection warnings -- callers consume these promises.
+  readyPromise.catch(() => undefined);
+  completionPromise.catch(() => undefined);
 
   activeSession = session;
 
@@ -219,45 +238,35 @@ export async function startGradiumSttSession(): Promise<void> {
       JSON.stringify({
         type: "setup",
         model_name: getGradiumModelName(),
-        input_format: "pcm"
-      })
+        input_format: "pcm",
+      }),
     );
   });
 
-  socket.on("message", (raw: RawData) => {
-    handleMessage(session, raw);
-  });
+  socket.on("message", (raw: RawData) => handleMessage(session, raw));
 
-  socket.on("error", (error: Error) => {
-    const wrapped = error instanceof Error ? error : new Error(String(error));
-    failSession(session, wrapped);
-  });
+  socket.on("error", (err: Error) => failSession(session, err));
 
   socket.on("close", () => {
     if (session.error) {
       cleanupSession(session);
       return;
     }
-
     if (session.stopRequested) {
-      settleCompletion(session, session.transcriptSegments.join(" ").trim());
+      settleOnce(session, "completion", "resolve", buildTranscript(session));
       cleanupSession(session);
       return;
     }
-
     failSession(session, new Error("Gradium STT connection closed unexpectedly."));
   });
-
-  return;
 }
 
 export function pushGradiumSttAudioChunk(audioBuffer: ArrayBuffer): void {
   const session = getActiveSession();
-  if (session.error) {
-    throw session.error;
-  }
+  if (session.error) throw session.error;
 
   const base64 = Buffer.from(audioBuffer).toString("base64");
+
   if (!session.ready || session.socket.readyState !== WebSocket.OPEN) {
     session.pendingAudioChunks.push(base64);
     return;
@@ -281,10 +290,5 @@ export async function stopGradiumSttSession(): Promise<string> {
 
   const transcript = (await session.completionPromise).trim();
   cleanupSession(session);
-
-  if (!transcript) {
-    throw new Error("Gradium transcription returned empty text.");
-  }
-
   return transcript;
 }

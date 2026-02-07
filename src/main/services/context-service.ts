@@ -10,6 +10,10 @@ import {
   readClipboardText
 } from "./macos-service";
 
+interface CaptureContextOptions {
+  persistClipboardImage?: boolean;
+}
+
 function getArtifactDir(): string {
   return join(app.getPath("userData"), "artifacts");
 }
@@ -30,18 +34,22 @@ async function saveClipboardImageToDisk(image: Electron.NativeImage): Promise<st
   return filePath;
 }
 
-function buildClipboardContext(clipboardText: string, clipboardImagePath?: string): ClipboardContext {
-  if (clipboardImagePath) {
+function buildClipboardContext(params: {
+  clipboardText: string;
+  hasImage: boolean;
+  clipboardImagePath?: string;
+}): ClipboardContext {
+  if (params.hasImage) {
     return {
       kind: "image",
-      imagePath: clipboardImagePath
+      imagePath: params.clipboardImagePath
     };
   }
 
-  if (clipboardText.trim().length > 0) {
+  if (params.clipboardText.trim().length > 0) {
     return {
       kind: "text",
-      text: boundText(clipboardText)
+      text: boundText(params.clipboardText)
     };
   }
 
@@ -50,14 +58,22 @@ function buildClipboardContext(clipboardText: string, clipboardImagePath?: strin
   };
 }
 
-export async function captureContextSnapshot(): Promise<ContextSnapshot> {
+export async function captureContextSnapshot(options?: CaptureContextOptions): Promise<ContextSnapshot> {
   const activeAppPromise = getActiveAppContext();
   const clipboardText = readClipboardText();
   const clipboardImage = readClipboardImage();
-  const clipboardImagePath = await saveClipboardImageToDisk(clipboardImage);
+  const hasImage = !clipboardImage.isEmpty();
+  const clipboardImagePath =
+    hasImage && options?.persistClipboardImage
+      ? await saveClipboardImageToDisk(clipboardImage)
+      : undefined;
   const activeApp = await activeAppPromise;
 
-  const clipboard = buildClipboardContext(clipboardText, clipboardImagePath);
+  const clipboard = buildClipboardContext({
+    clipboardText,
+    hasImage,
+    clipboardImagePath
+  });
   const sourceUsed = pickSourceUsed({
     clipboardKind: clipboard.kind,
     clipboardText

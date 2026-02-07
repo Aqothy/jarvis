@@ -27,10 +27,15 @@ function notify(title: string, body: string): void {
   }
 }
 
+/**
+ * Orchestrates the text rewrite flow:
+ * 1. Capture what is currently in the clipboard.
+ * 2. Send that text + instructions to the Gemini LLM.
+ * 3. Attempt to paste the result back into the active app at the cursor.
+ */
 export async function runTextTask(request: TextTaskRequest): Promise<TextTaskResult> {
-  const context = await captureContextSnapshot();
-  const clipboardText = context.clipboard.text?.text;
-  const sourceText = clipboardText;
+  const context = await captureContextSnapshot({ persistClipboardImage: false });
+  const sourceText = context.clipboard.text?.text;
 
   if (!sourceText || sourceText.trim().length === 0) {
     throw new Error("No clipboard text found. Copy text to clipboard, then retry.");
@@ -42,6 +47,7 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
     activeApp: context.activeApp
   });
 
+  // Attempt to insert directly. Fallback to clipboard if it fails (e.g. no accessibility permission).
   const inserted = await insertTextAtCursor(transformedText);
   let fallbackCopiedToClipboard = false;
   if (!inserted) {
@@ -63,8 +69,14 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
   };
 }
 
+/**
+ * Orchestrates the image transformation flow:
+ * 1. Verify an image exists in the clipboard.
+ * 2. Send image and instructions to OpenAI DALL-E (edits).
+ * 3. Put the result back in the clipboard and notify the user.
+ */
 export async function runImageTask(request: ImageTaskRequest): Promise<ImageTaskResult> {
-  const context = await captureContextSnapshot();
+  const context = await captureContextSnapshot({ persistClipboardImage: true });
   if (context.clipboard.kind !== "image" || !context.clipboard.imagePath) {
     throw new Error("No clipboard image found. Copy an image to clipboard, then retry.");
   }

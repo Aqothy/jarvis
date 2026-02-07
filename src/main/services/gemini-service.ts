@@ -43,6 +43,10 @@ export async function transformText(params: {
     params.sourceText,
   ].join("\n");
 
+  /**
+   * We use a low temperature (0.2) to ensure high consistency and accuracy in the rewrite.
+   * High maxOutputTokens allows for longer document transformations if needed.
+   */
   const response = await client.models.generateContent({
     model,
     contents: userPrompt,
@@ -54,9 +58,10 @@ export async function transformText(params: {
     }
   });
 
-  if (typeof response.text === "string" && response.text.trim().length > 0) {
-    return response.text.trim();
+  const text = typeof response.text === "string" ? response.text.trim() : "";
+  if (text.length === 0) {
+    throw new Error("Gemini text transform returned empty content.");
   }
 
-  throw new Error("Gemini text transform returned empty content.");
+  return text;
 }

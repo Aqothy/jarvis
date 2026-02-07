@@ -1,4 +1,5 @@
 import { ipcMain, systemPreferences } from "electron";
+import log from "electron-log/main.js";
 import type {
   ContextSnapshot,
   InsertTextAtCursorResult,
@@ -6,92 +7,128 @@ import type {
   ImageTaskResult,
   PermissionStatus,
   TextTaskRequest,
-  TextTaskResult
+  TextTaskResult,
 } from "./types";
+import { IPC_CHANNELS } from "./ipc-channels";
 import { captureContextSnapshot } from "./services/context-service";
 import {
   getAccessibilityPermissionStatus,
   insertTextAtCursor,
   requestAccessibilityPermission,
-  writeClipboardText
+  writeClipboardText,
 } from "./services/macos-service";
 import {
   pushGradiumSttAudioChunk,
   startGradiumSttSession,
-  stopGradiumSttSession
+  stopGradiumSttSession,
 } from "./services/gradium-stt-service";
 import { runImageTask, runTextTask } from "./services/task-runner";
 
+/**
+ * Registers listeners for messages coming from the Renderer process.
+ * 'ipcMain.handle' corresponds to 'ipcRenderer.invoke' in the preload script.
+ */
 export function registerIpcHandlers(): void {
-  ipcMain.handle("assistant:get-permission-status", async (): Promise<PermissionStatus> => {
-    const microphone = systemPreferences.getMediaAccessStatus("microphone") === "granted";
-    const accessibility = getAccessibilityPermissionStatus();
-    return { microphone, accessibility };
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.getPermissionStatus,
+    async (): Promise<PermissionStatus> => {
+      const microphone =
+        systemPreferences.getMediaAccessStatus("microphone") === "granted";
+      const accessibility = getAccessibilityPermissionStatus();
+      return { microphone, accessibility };
+    },
+  );
 
-  ipcMain.handle("assistant:request-microphone-permission", async (): Promise<boolean> => {
-    const granted = await systemPreferences.askForMediaAccess("microphone");
-    return granted;
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.requestMicrophonePermission,
+    async (): Promise<boolean> => {
+      const granted = await systemPreferences.askForMediaAccess("microphone");
+      return granted;
+    },
+  );
 
-  ipcMain.handle("assistant:request-accessibility-permission", async (): Promise<boolean> => {
-    return requestAccessibilityPermission();
-  });
+  ipcMain.handle(
+    IPC_CHANNELS.requestAccessibilityPermission,
+    async (): Promise<boolean> => {
+      return requestAccessibilityPermission();
+    },
+  );
 
-  ipcMain.handle("assistant:stt-start", async (): Promise<void> => {
+  // STT Session Management: Starts the WebSocket connection to the transcription service
+  ipcMain.handle(IPC_CHANNELS.sttStart, async (): Promise<void> => {
     await startGradiumSttSession();
   });
 
-  ipcMain.on("assistant:stt-audio-chunk", (_event, audioBuffer: ArrayBuffer | Uint8Array) => {
-    try {
-      const normalized =
-        audioBuffer instanceof ArrayBuffer
-          ? audioBuffer
-          : new Uint8Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.byteLength).slice().buffer;
-      pushGradiumSttAudioChunk(normalized);
-    } catch {
-    }
-  });
+  // Receives raw audio chunks from the frontend and pushes them to the active STT session.
+  // Uses 'on' (fire-and-forget) instead of 'handle' since audio streaming has no response.
+  ipcMain.on(
+    IPC_CHANNELS.sttAudioChunk,
+    (_event, audioBuffer: ArrayBuffer | Uint8Array) => {
+      try {
+        const buffer =
+          audioBuffer instanceof ArrayBuffer
+            ? audioBuffer
+            : (new Uint8Array(audioBuffer).buffer as ArrayBuffer);
+        pushGradiumSttAudioChunk(buffer);
+      } catch (err) {
+        log.debug("Failed to push STT audio chunk:", err);
+      }
+    },
+  );
 
-  ipcMain.handle("assistant:stt-stop", async (): Promise<{ transcript: string }> => {
-    const transcript = await stopGradiumSttSession();
-    return { transcript };
-  });
-
-  ipcMain.handle("assistant:capture-context-preview", async (): Promise<ContextSnapshot> => {
-    return captureContextSnapshot();
-  });
-
-  ipcMain.handle("assistant:insert-text-at-cursor", async (_event, text: string): Promise<InsertTextAtCursorResult> => {
-    if (!text || text.trim().length === 0) {
-      return {
-        inserted: false,
-        fallbackCopiedToClipboard: false
-      };
-    }
-
-    const inserted = await insertTextAtCursor(text);
-    let fallbackCopiedToClipboard = false;
-
-    if (!inserted) {
-      writeClipboardText(text);
-      fallbackCopiedToClipboard = true;
-    }
-
-    return {
-      inserted,
-      fallbackCopiedToClipboard
-    };
-  });
-
-  ipcMain.handle("assistant:run-text-task", async (_event, request: TextTaskRequest): Promise<TextTaskResult> => {
-    return runTextTask(request);
-  });
+  // Ends the session and returns the final transcript
+  ipcMain.handle(
+    IPC_CHANNELS.sttStop,
+    async (): Promise<{ transcript: string }> => {
+      const transcript = await stopGradiumSttSession();
+      return { transcript };
+    },
+  );
 
   ipcMain.handle(
-    "assistant:run-image-task",
+    IPC_CHANNELS.captureContextPreview,
+    async (): Promise<ContextSnapshot> => {
+      return captureContextSnapshot({ persistClipboardImage: false });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.insertTextAtCursor,
+    async (_event, text: string): Promise<InsertTextAtCursorResult> => {
+      if (!text || text.trim().length === 0) {
+        return {
+          inserted: false,
+          fallbackCopiedToClipboard: false,
+        };
+      }
+
+      const inserted = await insertTextAtCursor(text);
+      let fallbackCopiedToClipboard = false;
+
+      // Fallback: If accessibility-based insertion fails, copy result to clipboard
+      if (!inserted) {
+        writeClipboardText(text);
+        fallbackCopiedToClipboard = true;
+      }
+
+      return {
+        inserted,
+        fallbackCopiedToClipboard,
+      };
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.runTextTask,
+    async (_event, request: TextTaskRequest): Promise<TextTaskResult> => {
+      return runTextTask(request);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.runImageTask,
     async (_event, request: ImageTaskRequest): Promise<ImageTaskResult> => {
       return runImageTask(request);
-    }
+    },
   );
 }

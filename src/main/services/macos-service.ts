@@ -5,6 +5,9 @@ import type { ActiveAppContext } from "../types";
 
 const execFileAsync = promisify(execFile);
 
+/** Minimum delay (ms) after simulating Cmd+V to let the target app read the clipboard. */
+const PASTE_SETTLE_MS = 120;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -67,7 +70,8 @@ export async function insertTextAtCursor(text: string): Promise<boolean> {
   try {
     clipboard.writeText(text);
     await runAppleScript('tell application "System Events" to keystroke "v" using command down');
-    await delay(120);
+    // Allow the target app time to read the clipboard before we restore it.
+    await delay(PASTE_SETTLE_MS);
     return true;
   } catch {
     return false;

@@ -2,6 +2,16 @@ import { readFile } from "node:fs/promises";
 
 const OPENAI_API_URL = "https://api.openai.com/v1";
 
+interface OpenAIImageEditResponse {
+  data: Array<{ b64_json?: string }>;
+}
+
+interface OpenAIErrorResponse {
+  error?: {
+    message?: string;
+  };
+}
+
 function getApiKey(): string {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -10,13 +20,16 @@ function getApiKey(): string {
   return apiKey;
 }
 
-async function parseJsonOrThrow(response: Response): Promise<any> {
-  const data = await response.json();
+async function parseResponseJson(response: Response): Promise<OpenAIImageEditResponse> {
+  const body = (await response.json()) as OpenAIImageEditResponse & OpenAIErrorResponse;
   if (!response.ok) {
-    const message = typeof data?.error?.message === "string" ? data.error.message : "OpenAI request failed";
+    const message =
+      typeof body.error?.message === "string"
+        ? body.error.message
+        : "OpenAI request failed";
     throw new Error(message);
   }
-  return data;
+  return body;
 }
 
 export async function transformClipboardImage(params: {
@@ -41,7 +54,7 @@ export async function transformClipboardImage(params: {
     body: form
   });
 
-  const data = await parseJsonOrThrow(response);
+  const data = await parseResponseJson(response);
   const b64 = data?.data?.[0]?.b64_json;
   if (typeof b64 !== "string" || b64.length === 0) {
     throw new Error("Image transform did not return image data.");

@@ -1,13 +1,23 @@
 import "dotenv/config";
-import { app, BrowserWindow, globalShortcut } from "electron";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  globalShortcut,
+  nativeImage,
+} from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import log from "electron-log/main.js";
 import { registerIpcHandlers } from "./ipc";
+import { IPC_CHANNELS } from "./ipc-channels";
 
 log.initialize();
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
 
 function resolvePreloadPath(): string {
   // Sandboxed preload scripts must be CJS. With "type": "module" in package.json,
@@ -20,17 +30,33 @@ function resolvePreloadPath(): string {
 }
 
 function createWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return;
+  }
+
   mainWindow = new BrowserWindow({
-    width: 1160,
-    height: 760,
-    minWidth: 980,
-    minHeight: 640,
-    title: "Jarvis MVP",
+    show: false,
+    width: 860,
+    height: 640,
+    minWidth: 720,
+    minHeight: 520,
+    title: "Jarvis Settings",
     backgroundColor: "#0f1216",
     webPreferences: {
       preload: resolvePreloadPath(),
+      sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  mainWindow.removeMenu();
+
+  mainWindow.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow?.hide();
     }
   });
 
@@ -45,38 +71,112 @@ function createWindow(): void {
   }
 }
 
+function showSettingsWindow(): void {
+  if (!mainWindow) {
+    createWindow();
+  }
+
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function createTrayIcon(): Electron.NativeImage {
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#22c55e"/><text x="9" y="12" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#ffffff">J</text></svg>';
+  const image = nativeImage
+    .createFromDataURL(
+      `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
+    )
+    .resize({ width: 18, height: 18 });
+  image.setTemplateImage(false);
+  return image;
+}
+
+function createStatusTray(): void {
+  if (tray) {
+    return;
+  }
+
+  tray = new Tray(createTrayIcon());
+  tray.setToolTip("Jarvis");
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Settings",
+        click: () => showSettingsWindow(),
+      },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => {
+          app.quit();
+        },
+      },
+    ]),
+  );
+}
+
 function registerPushToTalkShortcut(): void {
-  const accelerators = ["Alt+Space"];
-
-  for (const accelerator of accelerators) {
-    const registered = globalShortcut.register(accelerator, () => {
-      mainWindow?.webContents.send("assistant:push-to-talk-shortcut");
-    });
-
-    if (!registered) {
-      log.warn(`Failed to register shortcut: ${accelerator}`);
+  const registered = globalShortcut.register("Alt+Space", () => {
+    if (!mainWindow) {
+      createWindow();
     }
+    if (!mainWindow) {
+      return;
+    }
+
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once("did-finish-load", () => {
+        mainWindow?.webContents.send(IPC_CHANNELS.pushToTalkShortcut);
+      });
+      return;
+    }
+
+    mainWindow.webContents.send(IPC_CHANNELS.pushToTalkShortcut);
+  });
+
+  if (!registered) {
+    log.warn("Failed to register global shortcut: Alt+Space");
   }
 }
 
 app.whenReady().then(() => {
   registerIpcHandlers();
   createWindow();
+  createStatusTray();
   registerPushToTalkShortcut();
 
+  if (process.platform === "darwin") {
+    app.dock.hide();
+  }
+
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    showSettingsWindow();
   });
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  // Keep running in the menu bar without visible windows.
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
+  tray?.destroy();
+  tray = null;
 });
