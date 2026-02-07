@@ -3,6 +3,7 @@ import type { ContextSnapshot, PermissionStatus } from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 
 type TaskState = "idle" | "running_text";
+type RecordingMode = "auto" | "force_dictation";
 
 const INITIAL_PERMISSIONS: PermissionStatus = {
   microphone: false,
@@ -19,6 +20,7 @@ export function App(): React.ReactElement {
   );
   const [taskState, setTaskState] = useState<TaskState>("idle");
   const taskStateRef = useRef<TaskState>("idle");
+  const recordingModeRef = useRef<RecordingMode>("auto");
   const [error, setError] = useState<string | null>(null);
 
   const { captureState, captureStateRef, startCapture, stopCapture, teardown } =
@@ -77,20 +79,28 @@ export function App(): React.ReactElement {
   // Recording + task orchestration
   // ---------------------------------------------------------------------------
 
-  const handleStartRecording = useCallback(async (): Promise<void> => {
-    setError(null);
+  const handleStartRecording = useCallback(
+    async (mode: RecordingMode): Promise<void> => {
+      recordingModeRef.current = mode;
+      setError(null);
 
-    try {
-      refreshPermissions().catch(() => undefined);
-      await startCapture();
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to start recording.",
-      );
-    }
-  }, [refreshPermissions, startCapture]);
+      try {
+        refreshPermissions().catch(() => undefined);
+        await startCapture();
+      } catch (err) {
+        recordingModeRef.current = "auto";
+        setError(
+          err instanceof Error ? err.message : "Unable to start recording.",
+        );
+      }
+    },
+    [refreshPermissions, startCapture],
+  );
 
   const handleStopRecording = useCallback(async (): Promise<void> => {
+    const mode = recordingModeRef.current;
+    recordingModeRef.current = "auto";
+
     try {
       const transcript = await stopCapture();
       if (!transcript) {
@@ -101,6 +111,7 @@ export function App(): React.ReactElement {
       // TODO: could be image too, need to handle image as well
       const textTaskResult = await bridge.runTextTask({
         instruction: transcript,
+        mode,
       });
       setContextPreview(textTaskResult.context);
       setTaskStateNow("idle");
@@ -109,6 +120,20 @@ export function App(): React.ReactElement {
       setError(err instanceof Error ? err.message : "Task failed.");
     }
   }, [bridge, stopCapture]);
+
+  const handlePushToTalk = useCallback(
+    async (mode: RecordingMode): Promise<void> => {
+      if (captureStateRef.current === "recording") {
+        await handleStopRecording();
+        return;
+      }
+
+      if (captureStateRef.current === "idle" && taskStateRef.current === "idle") {
+        await handleStartRecording(mode);
+      }
+    },
+    [captureStateRef, handleStartRecording, handleStopRecording],
+  );
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -123,27 +148,25 @@ export function App(): React.ReactElement {
     refreshPermissions().catch(() => undefined);
     refreshContextPreview().catch(() => undefined);
 
-    const unsubscribe = bridge.onPushToTalkShortcut(() => {
-      if (captureStateRef.current === "recording") {
-        handleStopRecording().catch(() => undefined);
-      } else if (
-        captureStateRef.current === "idle" &&
-        taskStateRef.current === "idle"
-      ) {
-        handleStartRecording().catch(() => undefined);
-      }
+    const unsubscribePushToTalk = bridge.onPushToTalkShortcut(() => {
+      handlePushToTalk("auto").catch(() => undefined);
     });
+    const unsubscribeDictationPushToTalk = bridge.onPushToTalkDictationShortcut(
+      () => {
+        handlePushToTalk("force_dictation").catch(() => undefined);
+      },
+    );
 
     return () => {
-      unsubscribe();
+      unsubscribePushToTalk();
+      unsubscribeDictationPushToTalk();
       teardown({ closeContext: true }).catch(() => undefined);
     };
   }, [
     bridge,
     refreshPermissions,
     refreshContextPreview,
-    handleStartRecording,
-    handleStopRecording,
+    handlePushToTalk,
     teardown,
   ]);
 
@@ -175,7 +198,8 @@ export function App(): React.ReactElement {
             </span>
           </div>
           <div className="shortcut-hint">
-            Shortcut: <kbd>Option + Space</kbd>
+            Auto: <kbd>Option + Space</kbd> | Dictation Only:{" "}
+            <kbd>Option + Shift + Space</kbd>
           </div>
           <div className="actions">
             <button onClick={refreshPermissions}>Refresh</button>

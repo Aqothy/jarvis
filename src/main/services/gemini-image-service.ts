@@ -5,7 +5,7 @@ function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "GEMINI_API_KEY is not set. Add it to your environment before running image tasks."
+      "GEMINI_API_KEY is not set. Add it to your environment before running image tasks.",
     );
   }
   return apiKey;
@@ -46,19 +46,23 @@ export async function transformClipboardImage(params: {
     model,
     contents: [
       {
-        text: params.instruction
+        parts: [
+          {
+            text: params.instruction,
+          },
+          {
+            inlineData: {
+              mimeType: "image/png",
+              data: base64Image,
+            },
+          },
+        ],
       },
-      {
-        inlineData: {
-          mimeType: "image/png",
-          data: base64Image
-        }
-      }
-    ]
+    ],
   });
 
   // Extract the generated image from the response
-  // Gemini returns images as base64 in inline_data parts
+  // Gemini returns images as base64 in inlineData parts
   if (!response.candidates?.[0]?.content?.parts) {
     throw new Error("Gemini image generation returned no content parts.");
   }

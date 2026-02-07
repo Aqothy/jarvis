@@ -53,6 +53,13 @@ const api: AppBridge = {
     ipcRenderer.on(IPC_CHANNELS.pushToTalkShortcut, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.pushToTalkShortcut, handler);
   },
+
+  onPushToTalkDictationShortcut: (listener: () => void): (() => void) => {
+    const handler = () => listener();
+    ipcRenderer.on(IPC_CHANNELS.pushToTalkDictationShortcut, handler);
+    return () =>
+      ipcRenderer.removeListener(IPC_CHANNELS.pushToTalkDictationShortcut, handler);
+  },
 };
 
 /**
