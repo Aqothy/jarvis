@@ -13,6 +13,8 @@ import {
 import { transformClipboardImage } from "./openai-service";
 import { transformText } from "./gemini-service";
 
+type TextPromptMode = "clipboard_rewrite" | "direct_query";
+
 function getOutputDir(): string {
   return join(app.getPath("userData"), "outputs");
 }
@@ -27,24 +29,74 @@ function notify(title: string, body: string): void {
   }
 }
 
+function shouldUseClipboardContext(instruction: string): boolean {
+  const normalizedInstruction = instruction.toLowerCase().trim();
+  if (normalizedInstruction.length === 0) {
+    return true;
+  }
+
+  const explicitClipboardPatterns = [
+    /\bclipboard\b/,
+    /\bselected text\b/,
+    /\bselection\b/,
+    /\bcopied text\b/,
+    /\bthis text\b/,
+    /\bthis paragraph\b/,
+    /\bthis sentence\b/,
+    /\bthis message\b/,
+    /\bthis email\b/,
+    /\btext above\b/,
+    /\btext below\b/,
+    /\bthe above text\b/,
+    /\bthe below text\b/
+  ];
+
+  if (
+    explicitClipboardPatterns.some((pattern) => pattern.test(normalizedInstruction))
+  ) {
+    return true;
+  }
+
+  const startsWithTransformVerb = /^(rewrite|rephrase|paraphrase|proofread|edit|polish|fix|improve|shorten|expand|translate|summarize)\b/.test(
+    normalizedInstruction,
+  );
+  const referencesLocalText = /\b(this|it|text|paragraph|sentence|message|email|draft)\b/.test(
+    normalizedInstruction,
+  );
+
+  return startsWithTransformVerb && referencesLocalText;
+}
+
+function resolveTextPromptMode(instruction: string): TextPromptMode {
+  return shouldUseClipboardContext(instruction)
+    ? "clipboard_rewrite"
+    : "direct_query";
+}
+
 /**
  * Orchestrates the text rewrite flow:
  * 1. Capture what is currently in the clipboard.
- * 2. Send that text + instructions to the Gemini LLM.
+ * 2. Route prompt mode (clipboard rewrite vs direct query).
+ * 3. Send context to Gemini based on the selected mode.
  * 3. Attempt to paste the result back into the active app at the cursor.
  */
 export async function runTextTask(request: TextTaskRequest): Promise<TextTaskResult> {
   const context = await captureContextSnapshot({ persistClipboardImage: false });
-  const sourceText = context.clipboard.text?.text;
+  const promptMode = resolveTextPromptMode(request.instruction);
+  let sourceText = "";
 
-  if (!sourceText || sourceText.trim().length === 0) {
-    throw new Error("No clipboard text found. Copy text to clipboard, then retry.");
+  if (promptMode === "clipboard_rewrite") {
+    sourceText = context.clipboard.text?.text ?? "";
+    if (sourceText.trim().length === 0) {
+      throw new Error("No clipboard text found. Copy text to clipboard, then retry.");
+    }
   }
 
   const transformedText = await transformText({
     instruction: request.instruction,
     sourceText,
-    activeApp: context.activeApp
+    activeApp: context.activeApp,
+    mode: promptMode
   });
 
   // Attempt to insert directly. Fallback to clipboard if it fails (e.g. no accessibility permission).
@@ -57,7 +109,7 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
 
   notify(
     "Jarvis",
-    inserted ? "Text rewritten and inserted at cursor." : "Insert failed. Rewritten text copied to clipboard."
+    inserted ? "Response inserted at cursor." : "Insert failed. Response copied to clipboard."
   );
 
   return {

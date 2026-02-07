@@ -2,6 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 import type { Tool } from "@google/genai";
 import type { ActiveAppContext } from "../types";
 
+type TextPromptMode = "clipboard_rewrite" | "direct_query";
+
 function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -36,21 +38,36 @@ function getGeminiTools(): Tool[] {
 
 export async function transformText(params: {
   instruction: string;
-  sourceText: string;
+  sourceText?: string;
   activeApp: ActiveAppContext;
+  mode: TextPromptMode;
 }): Promise<string> {
   const client = getGeminiClient();
   const model = getGeminiTextModel();
+  const baseSystemPrompt =
+    "You are Jarvis, a virtual assistant that works anywhere. Be concise and helpful. The active app and window title may provide useful context, but do not reference them directly in the output.";
+  const searchPolicy =
+    "Use Google Search only when the user request needs fresh/external facts or you are uncertain.";
   const systemPrompt =
-    "You are Jarvis, a virtual assistant that works anywhere. You rewrite clipboard text for desktop workflows. Fulfill the user's prompt based on the instruction and source text. The active app and window title may provide useful context for rewriting the text, but do not reference them directly in the output. Use Google Search only when the user request needs fresh/external facts or you are uncertain. If the request is a pure rewrite/transform of the provided clipboard text, do not use search.";
-  const userPrompt = [
-    `Instruction: ${params.instruction}`,
-    `Active app: ${params.activeApp.name}`,
-    `Window title: ${params.activeApp.windowTitle}`,
-    "",
-    "Clipboard text:",
-    params.sourceText,
-  ].join("\n");
+    params.mode === "clipboard_rewrite"
+      ? `${baseSystemPrompt} You are editing or transforming user-provided clipboard text. Ground the response in that source text. If the request is a pure rewrite/transform of the provided clipboard text, do not use search.`
+      : `${baseSystemPrompt} Answer the user's instruction directly. ${searchPolicy}`;
+
+  const userPrompt =
+    params.mode === "clipboard_rewrite"
+      ? [
+          `Instruction: ${params.instruction}`,
+          `Active app: ${params.activeApp.name}`,
+          `Window title: ${params.activeApp.windowTitle}`,
+          "",
+          "Clipboard text:",
+          params.sourceText ?? "",
+        ].join("\n")
+      : [
+          `Instruction: ${params.instruction}`,
+          `Active app: ${params.activeApp.name}`,
+          `Window title: ${params.activeApp.windowTitle}`,
+        ].join("\n");
 
   /**
    * We use a low temperature (0.2) to ensure high consistency and accuracy in the rewrite.
