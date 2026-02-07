@@ -66,10 +66,8 @@ export function registerIpcHandlers(): void {
     (_event, audioBuffer: ArrayBuffer | Uint8Array) => {
       try {
         const buffer =
-          audioBuffer instanceof ArrayBuffer
-            ? audioBuffer
-            : (new Uint8Array(audioBuffer).buffer as ArrayBuffer);
-        pushGradiumSttAudioChunk(buffer);
+          audioBuffer instanceof Uint8Array ? audioBuffer.buffer : audioBuffer;
+        pushGradiumSttAudioChunk(buffer as ArrayBuffer);
       } catch (err) {
         log.debug("Failed to push STT audio chunk:", err);
       }

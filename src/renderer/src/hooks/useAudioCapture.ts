@@ -48,12 +48,11 @@ function downsampleToTarget(
 
 function toPcm16Buffer(input: Float32Array): ArrayBuffer {
   const buffer = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buffer);
+  const output = new Int16Array(buffer);
 
   for (let i = 0; i < input.length; i += 1) {
     const sample = Math.max(-1, Math.min(1, input[i]));
-    const value = sample < 0 ? sample * 32768 : sample * 32767;
-    view.setInt16(i * 2, value, true);
+    output[i] = sample < 0 ? sample * 32768 : sample * 32767;
   }
 
   return buffer;
@@ -69,7 +68,8 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sinkGainRef = useRef<GainNode | null>(null);
 
-  const pcmRemainderRef = useRef<Float32Array>(new Float32Array(0));
+  const pcmBufferRef = useRef(new Float32Array(FRAME_SAMPLES));
+  const pcmBufferIndexRef = useRef(0);
   const workletLoadedRef = useRef(false);
 
   const updateState = useCallback((next: CaptureState): void => {
@@ -79,19 +79,29 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
 
   const appendAndEmitFrames = useCallback(
     (samples24k: Float32Array): void => {
-      const previous = pcmRemainderRef.current;
-      const merged = new Float32Array(previous.length + samples24k.length);
-      merged.set(previous, 0);
-      merged.set(samples24k, previous.length);
+      let inputOffset = 0;
+      const buffer = pcmBufferRef.current;
 
-      let offset = 0;
-      while (merged.length - offset >= FRAME_SAMPLES) {
-        const frame = merged.slice(offset, offset + FRAME_SAMPLES);
-        bridge.pushSttAudioChunk(toPcm16Buffer(frame));
-        offset += FRAME_SAMPLES;
+      while (inputOffset < samples24k.length) {
+        const remainingInBuffer = FRAME_SAMPLES - pcmBufferIndexRef.current;
+        const toCopy = Math.min(
+          remainingInBuffer,
+          samples24k.length - inputOffset,
+        );
+
+        buffer.set(
+          samples24k.subarray(inputOffset, inputOffset + toCopy),
+          pcmBufferIndexRef.current,
+        );
+
+        pcmBufferIndexRef.current += toCopy;
+        inputOffset += toCopy;
+
+        if (pcmBufferIndexRef.current === FRAME_SAMPLES) {
+          bridge.pushSttAudioChunk(toPcm16Buffer(buffer));
+          pcmBufferIndexRef.current = 0;
+        }
       }
-
-      pcmRemainderRef.current = merged.slice(offset);
     },
     [bridge],
   );
@@ -126,7 +136,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       streamRef.current = null;
     }
 
-    pcmRemainderRef.current = new Float32Array(0);
+    pcmBufferIndexRef.current = 0;
 
     if (audioContext && options?.closeContext) {
       audioContextRef.current = null;
@@ -213,7 +223,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       sourceNodeRef.current = sourceNode;
       workletNodeRef.current = workletNode;
       sinkGainRef.current = sinkGain;
-      pcmRemainderRef.current = new Float32Array(0);
+      pcmBufferIndexRef.current = 0;
 
       await sttStartPromise;
       sttStarted = true;
@@ -240,9 +250,13 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
 
     updateState("transcribing");
 
-    if (pcmRemainderRef.current.length > 0) {
-      bridge.pushSttAudioChunk(toPcm16Buffer(pcmRemainderRef.current));
-      pcmRemainderRef.current = new Float32Array(0);
+    if (pcmBufferIndexRef.current > 0) {
+      bridge.pushSttAudioChunk(
+        toPcm16Buffer(
+          pcmBufferRef.current.subarray(0, pcmBufferIndexRef.current),
+        ),
+      );
+      pcmBufferIndexRef.current = 0;
     }
 
     const sttResultPromise = bridge.stopSttSession();

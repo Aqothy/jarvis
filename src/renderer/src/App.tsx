@@ -148,41 +148,53 @@ export function App(): React.ReactElement {
   // ---------------------------------------------------------------------------
 
   return (
-    <main className="app-shell settings-shell">
-      <section className="panel">
-        <h2>Permissions</h2>
-        <p>Microphone: {permissions.microphone ? "granted" : "missing"}</p>
-        <p>
-          Accessibility: {permissions.accessibility ? "granted" : "missing"}
-        </p>
-        <p className="mono">
-          Shortcut: Option+Space (
-          {captureState === "recording" ? "recording" : displayState})
-        </p>
-        <div className="button-row">
-          <button onClick={refreshPermissions}>Refresh</button>
-          <button onClick={requestAccessibility}>Request Accessibility</button>
-          <button onClick={refreshContextPreview}>
-            Refresh Context Snapshot
-          </button>
-        </div>
-      </section>
+    <main className="app-shell">
+      <div className="container">
+        <header>
+          <h1>Jarvis</h1>
+          <div className="status-badge" data-state={displayState}>
+            {displayState === "recording" ? "● Recording" : displayState}
+          </div>
+        </header>
 
-      {error && (
-        <section className="panel error">
-          <h2>Error</h2>
-          <p>{error}</p>
+        <section className="permissions">
+          <div className="permission-item">
+            <span>Microphone</span>
+            <span className={permissions.microphone ? "granted" : "missing"}>
+              {permissions.microphone ? "Granted" : "Missing"}
+            </span>
+          </div>
+          <div className="permission-item">
+            <span>Accessibility</span>
+            <span className={permissions.accessibility ? "granted" : "missing"}>
+              {permissions.accessibility ? "Granted" : "Missing"}
+            </span>
+          </div>
+          <div className="shortcut-hint">
+            Shortcut: <kbd>Option + Space</kbd>
+          </div>
+          <div className="actions">
+            <button onClick={refreshPermissions}>Refresh</button>
+            <button onClick={requestAccessibility}>Request Access</button>
+            <button onClick={refreshContextPreview}>Refresh Preview</button>
+          </div>
         </section>
-      )}
 
-      <section className="panel">
-        <h2>Context Snapshot</h2>
-        <pre>
-          {contextPreview
-            ? JSON.stringify(contextPreview, null, 2)
-            : "No context captured yet."}
-        </pre>
-      </section>
+        {error && (
+          <section className="error-box">
+            <p>{error}</p>
+          </section>
+        )}
+
+        <section className="preview">
+          <h3>Context Snapshot</h3>
+          <pre>
+            {contextPreview
+              ? JSON.stringify(contextPreview, null, 2)
+              : "No context captured."}
+          </pre>
+        </section>
+      </div>
     </main>
   );
 }

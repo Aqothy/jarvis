@@ -72,7 +72,7 @@ function createWindow(): void {
 }
 
 function showSettingsWindow(): void {
-  if (!mainWindow) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow();
   }
 
@@ -82,10 +82,6 @@ function showSettingsWindow(): void {
 
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
-  }
-
-  if (!mainWindow.isVisible()) {
-    mainWindow.show();
   }
 
   mainWindow.show();
