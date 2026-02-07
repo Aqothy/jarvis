@@ -32,6 +32,8 @@ interface ConnectionState {
   reconnectTimer: NodeJS.Timeout | null;
   shutdownRequested: boolean;
   activeStream: SttStream | null;
+  preStreamAudioChunks: string[];
+  startingStreamPromise: Promise<void> | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ interface ConnectionState {
 // ---------------------------------------------------------------------------
 
 const RECONNECT_DELAY_MS = 1000;
+const MAX_PRE_STREAM_AUDIO_CHUNKS = 64;
 
 const connectionState: ConnectionState = {
   socket: null,
@@ -50,6 +53,8 @@ const connectionState: ConnectionState = {
   reconnectTimer: null,
   shutdownRequested: false,
   activeStream: null,
+  preStreamAudioChunks: [],
+  startingStreamPromise: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -166,11 +171,11 @@ function createStream(): SttStream {
   };
 }
 
-function getActiveStream(): SttStream {
-  if (!connectionState.activeStream) {
-    throw new Error("No active Gradium STT stream.");
+function enqueuePreStreamAudioChunk(base64Audio: string): void {
+  connectionState.preStreamAudioChunks.push(base64Audio);
+  if (connectionState.preStreamAudioChunks.length > MAX_PRE_STREAM_AUDIO_CHUNKS) {
+    connectionState.preStreamAudioChunks.shift();
   }
-  return connectionState.activeStream;
 }
 
 function failStream(stream: SttStream, error: Error): void {
@@ -436,25 +441,64 @@ export async function startGradiumSttSession(): Promise<void> {
     throw new Error("A Gradium STT stream is already active.");
   }
 
-  await ensureConnectionReady();
-
-  const socket = connectionState.socket;
-  if (!socket || !connectionState.ready || socket.readyState !== WebSocket.OPEN) {
-    throw new Error(
-      "Gradium STT connection is not ready yet. Try again in a moment.",
-    );
+  if (connectionState.startingStreamPromise) {
+    throw new Error("A Gradium STT stream is already starting.");
   }
 
-  connectionState.activeStream = createStream();
+  const startPromise = (async (): Promise<void> => {
+    // Reset any stale pre-session audio before beginning a new capture session.
+    connectionState.preStreamAudioChunks = [];
+
+    await ensureConnectionReady();
+
+    if (connectionState.shutdownRequested) {
+      throw new Error("Gradium STT connection is shutting down.");
+    }
+
+    const socket = connectionState.socket;
+    if (
+      !socket ||
+      !connectionState.ready ||
+      socket.readyState !== WebSocket.OPEN
+    ) {
+      throw new Error(
+        "Gradium STT connection is not ready yet. Try again in a moment.",
+      );
+    }
+
+    const stream = createStream();
+    if (connectionState.preStreamAudioChunks.length > 0) {
+      stream.pendingAudioChunks.push(...connectionState.preStreamAudioChunks);
+      connectionState.preStreamAudioChunks = [];
+    }
+    connectionState.activeStream = stream;
+    flushPendingAudio();
+  })();
+
+  connectionState.startingStreamPromise = startPromise;
+  try {
+    await startPromise;
+  } finally {
+    if (connectionState.startingStreamPromise === startPromise) {
+      connectionState.startingStreamPromise = null;
+    }
+  }
 }
 
 export function pushGradiumSttAudioChunk(audioBuffer: ArrayBuffer): void {
-  const stream = getActiveStream();
+  const base64 = Buffer.from(audioBuffer).toString("base64");
+  const stream = connectionState.activeStream;
+
+  // Audio can arrive slightly before session creation due to IPC/worklet timing.
+  // Buffer a bounded amount so startup races don't drop initial speech.
+  if (!stream) {
+    enqueuePreStreamAudioChunk(base64);
+    return;
+  }
+
   if (stream.error) {
     throw stream.error;
   }
-
-  const base64 = Buffer.from(audioBuffer).toString("base64");
 
   const socket = connectionState.socket;
   if (!socket || !connectionState.ready || socket.readyState !== WebSocket.OPEN) {
@@ -466,7 +510,15 @@ export function pushGradiumSttAudioChunk(audioBuffer: ArrayBuffer): void {
 }
 
 export async function stopGradiumSttSession(): Promise<string> {
-  const stream = getActiveStream();
+  let stream = connectionState.activeStream;
+  if (!stream && connectionState.startingStreamPromise) {
+    await connectionState.startingStreamPromise;
+    stream = connectionState.activeStream;
+  }
+
+  if (!stream) {
+    throw new Error("No active Gradium STT stream.");
+  }
   if (stream.error) {
     if (connectionState.activeStream === stream) {
       connectionState.activeStream = null;
@@ -497,6 +549,8 @@ export async function stopGradiumSttSession(): Promise<string> {
 export function shutdownGradiumSttConnection(): void {
   connectionState.shutdownRequested = true;
   clearReconnectTimer();
+  connectionState.preStreamAudioChunks = [];
+  connectionState.startingStreamPromise = null;
 
   const stream = connectionState.activeStream;
   if (stream) {
