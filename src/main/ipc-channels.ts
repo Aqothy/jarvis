@@ -9,5 +9,6 @@ export const IPC_CHANNELS = {
   insertTextAtCursor: "assistant:insert-text-at-cursor",
   runTextTask: "assistant:run-text-task",
   runImageTask: "assistant:run-image-task",
-  pushToTalkShortcut: "assistant:push-to-talk-shortcut"
+  pushToTalkShortcut: "assistant:push-to-talk-shortcut",
+  pushToTalkDictationShortcut: "assistant:push-to-talk-dictation-shortcut"
 } as const;

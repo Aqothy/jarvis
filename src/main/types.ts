@@ -26,13 +26,25 @@ export interface ContextSnapshot {
 
 export interface TextTaskRequest {
   instruction: string;
+  mode?: "auto" | "force_dictation";
 }
+
+export type TextPromptMode =
+  | "clipboard_rewrite"
+  | "clipboard_explain"
+  | "direct_query"
+  | "dictation_cleanup";
+
+export type TextDeliveryMode = "insert" | "clipboard";
 
 export interface TextTaskResult {
   context: ContextSnapshot;
   sourceText: string;
   transformedText: string;
+  promptMode: TextPromptMode;
+  deliveryMode: TextDeliveryMode;
   inserted: boolean;
+  copiedToClipboard: boolean;
   fallbackCopiedToClipboard: boolean;
 }
 
@@ -71,4 +83,5 @@ export interface AppBridge {
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
   captureContextPreview: () => Promise<ContextSnapshot>;
   onPushToTalkShortcut: (listener: () => void) => () => void;
+  onPushToTalkDictationShortcut: (listener: () => void) => () => void;
 }

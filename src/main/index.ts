@@ -128,27 +128,37 @@ function createStatusTray(): void {
   );
 }
 
-function registerPushToTalkShortcut(): void {
-  const registered = globalShortcut.register("Alt+Space", () => {
-    if (!mainWindow) {
-      createWindow();
-    }
-    if (!mainWindow) {
-      return;
-    }
+function emitShortcutEvent(channel: string): void {
+  if (!mainWindow) {
+    createWindow();
+  }
+  if (!mainWindow) {
+    return;
+  }
 
-    if (mainWindow.webContents.isLoading()) {
-      mainWindow.webContents.once("did-finish-load", () => {
-        mainWindow?.webContents.send(IPC_CHANNELS.pushToTalkShortcut);
-      });
-      return;
-    }
+  if (mainWindow.webContents.isLoading()) {
+    mainWindow.webContents.once("did-finish-load", () => {
+      mainWindow?.webContents.send(channel);
+    });
+    return;
+  }
 
-    mainWindow.webContents.send(IPC_CHANNELS.pushToTalkShortcut);
+  mainWindow.webContents.send(channel);
+}
+
+function registerPushToTalkShortcuts(): void {
+  const registeredDefault = globalShortcut.register("Alt+Space", () => {
+    emitShortcutEvent(IPC_CHANNELS.pushToTalkShortcut);
   });
-
-  if (!registered) {
+  if (!registeredDefault) {
     log.warn("Failed to register global shortcut: Alt+Space");
+  }
+
+  const registeredDictation = globalShortcut.register("Alt+Shift+Space", () => {
+    emitShortcutEvent(IPC_CHANNELS.pushToTalkDictationShortcut);
+  });
+  if (!registeredDictation) {
+    log.warn("Failed to register global shortcut: Alt+Shift+Space");
   }
 }
 
@@ -163,7 +173,7 @@ app.whenReady().then(() => {
   });
   createWindow();
   createStatusTray();
-  registerPushToTalkShortcut();
+  registerPushToTalkShortcuts();
 
   if (process.platform === "darwin") {
     app.dock.hide();
