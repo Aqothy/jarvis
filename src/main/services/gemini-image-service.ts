@@ -12,7 +12,7 @@ function getGeminiApiKey(): string {
 }
 
 function getGeminiImageModel(): string {
-  return process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image-preview";
+  return process.env.GEMINI_IMAGE_MODEL || "gemini-2.5-flash-image";
 }
 
 let cachedClient: GoogleGenAI | null = null;
