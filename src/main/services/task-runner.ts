@@ -10,7 +10,7 @@ import {
   writeClipboardImage,
   writeClipboardText
 } from "./macos-service";
-import { transformClipboardImage } from "./openai-service";
+import { transformClipboardImage } from "./gemini-image-service";
 import { transformText } from "./gemini-service";
 
 function getOutputDir(): string {
@@ -72,7 +72,7 @@ export async function runTextTask(request: TextTaskRequest): Promise<TextTaskRes
 /**
  * Orchestrates the image transformation flow:
  * 1. Verify an image exists in the clipboard.
- * 2. Send image and instructions to OpenAI DALL-E (edits).
+ * 2. Send image and instructions to Gemini (image generation/editing).
  * 3. Put the result back in the clipboard and notify the user.
  */
 export async function runImageTask(request: ImageTaskRequest): Promise<ImageTaskResult> {
