@@ -46,13 +46,17 @@ export async function transformClipboardImage(params: {
     model,
     contents: [
       {
-        text: params.instruction
-      },
-      {
-        inlineData: {
-          mimeType: "image/png",
-          data: base64Image
-        }
+        parts: [
+          {
+            text: params.instruction
+          },
+          {
+            inline_data: {
+              mime_type: "image/png",
+              data: base64Image
+            }
+          }
+        ]
       }
     ]
   });
@@ -64,12 +68,12 @@ export async function transformClipboardImage(params: {
   }
 
   const parts = response.candidates[0].content.parts;
-  const imagePart = parts.find((part) => part.inlineData?.data);
+  const imagePart = parts.find((part) => part.inline_data?.data);
 
-  if (!imagePart?.inlineData?.data) {
+  if (!imagePart?.inline_data?.data) {
     throw new Error("Gemini image generation did not return image data.");
   }
 
-  const base64Output = imagePart.inlineData.data;
+  const base64Output = imagePart.inline_data.data;
   return Buffer.from(base64Output, "base64");
 }
