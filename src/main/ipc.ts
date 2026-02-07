@@ -54,7 +54,7 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  // STT Session Management: Starts the WebSocket connection to the transcription service
+  // STT Stream management: starts a single transcription stream on the persistent socket.
   ipcMain.handle(IPC_CHANNELS.sttStart, async (): Promise<void> => {
     await startGradiumSttSession();
   });
@@ -74,7 +74,7 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  // Ends the session and returns the final transcript
+  // Ends the active transcription stream and returns the final transcript.
   ipcMain.handle(
     IPC_CHANNELS.sttStop,
     async (): Promise<{ transcript: string }> => {

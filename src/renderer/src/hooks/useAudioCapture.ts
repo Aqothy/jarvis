@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type MutableRefObject } from "react";
+import pcmWorkletUrl from "../pcm-capture.worklet.js?url";
 
 const TARGET_SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 1920;
@@ -106,44 +107,45 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
     [bridge],
   );
 
-  const teardown = useCallback(async (options?: {
-    closeContext?: boolean;
-  }): Promise<void> => {
-    const workletNode = workletNodeRef.current;
-    const sourceNode = sourceNodeRef.current;
-    const sinkGain = sinkGainRef.current;
-    const audioContext = audioContextRef.current;
-    const stream = streamRef.current;
+  const teardown = useCallback(
+    async (options?: { closeContext?: boolean }): Promise<void> => {
+      const workletNode = workletNodeRef.current;
+      const sourceNode = sourceNodeRef.current;
+      const sinkGain = sinkGainRef.current;
+      const audioContext = audioContextRef.current;
+      const stream = streamRef.current;
 
-    if (workletNode) {
-      workletNode.port.onmessage = null;
-      workletNode.disconnect();
-      workletNodeRef.current = null;
-    }
+      if (workletNode) {
+        workletNode.port.onmessage = null;
+        workletNode.disconnect();
+        workletNodeRef.current = null;
+      }
 
-    if (sourceNode) {
-      sourceNode.disconnect();
-      sourceNodeRef.current = null;
-    }
+      if (sourceNode) {
+        sourceNode.disconnect();
+        sourceNodeRef.current = null;
+      }
 
-    if (sinkGain) {
-      sinkGain.disconnect();
-      sinkGainRef.current = null;
-    }
+      if (sinkGain) {
+        sinkGain.disconnect();
+        sinkGainRef.current = null;
+      }
 
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
 
-    pcmBufferIndexRef.current = 0;
+      pcmBufferIndexRef.current = 0;
 
-    if (audioContext && options?.closeContext) {
-      audioContextRef.current = null;
-      workletLoadedRef.current = false;
-      await audioContext.close().catch(() => undefined);
-    }
-  }, []);
+      if (audioContext && options?.closeContext) {
+        audioContextRef.current = null;
+        workletLoadedRef.current = false;
+        await audioContext.close().catch(() => undefined);
+      }
+    },
+    [],
+  );
 
   const startCapture = useCallback(async (): Promise<void> => {
     if (captureStateRef.current !== "idle") {
@@ -180,9 +182,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       const sourceNode = audioContext.createMediaStreamSource(stream);
 
       if (!workletLoadedRef.current) {
-        await audioContext.audioWorklet.addModule(
-          new URL("../pcm-capture.worklet.js", import.meta.url),
-        );
+        await audioContext.audioWorklet.addModule(pcmWorkletUrl);
         workletLoadedRef.current = true;
       }
 
@@ -214,9 +214,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
           return;
         }
 
-        appendAndEmitFrames(
-          downsampleToTarget(event.data, capturedSampleRate),
-        );
+        appendAndEmitFrames(downsampleToTarget(event.data, capturedSampleRate));
       };
 
       streamRef.current = stream;

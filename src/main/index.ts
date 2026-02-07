@@ -12,6 +12,10 @@ import { join } from "node:path";
 import log from "electron-log/main.js";
 import { registerIpcHandlers } from "./ipc";
 import { IPC_CHANNELS } from "./ipc-channels";
+import {
+  initializeGradiumSttConnection,
+  shutdownGradiumSttConnection,
+} from "./services/gradium-stt-service";
 
 log.initialize();
 
@@ -150,6 +154,13 @@ function registerPushToTalkShortcut(): void {
 
 app.whenReady().then(() => {
   registerIpcHandlers();
+  initializeGradiumSttConnection().catch((error) => {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to initialize Gradium STT connection.";
+    log.warn("Gradium STT init failed:", message);
+  });
   createWindow();
   createStatusTray();
   registerPushToTalkShortcut();
@@ -169,6 +180,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  shutdownGradiumSttConnection();
 });
 
 app.on("will-quit", () => {

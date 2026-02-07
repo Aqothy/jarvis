@@ -7,7 +7,7 @@ import type { ClipboardContext, ContextSnapshot } from "../types";
 import {
   getActiveAppContext,
   readClipboardImage,
-  readClipboardText
+  readClipboardText,
 } from "./macos-service";
 
 interface CaptureContextOptions {
@@ -22,14 +22,19 @@ async function ensureArtifactDir(): Promise<void> {
   await mkdir(getArtifactDir(), { recursive: true });
 }
 
-async function saveClipboardImageToDisk(image: Electron.NativeImage): Promise<string | undefined> {
+async function saveClipboardImageToDisk(
+  image: Electron.NativeImage,
+): Promise<string | undefined> {
   if (image.isEmpty()) {
     return undefined;
   }
 
   await ensureArtifactDir();
   const png = image.toPNG();
-  const filePath = join(getArtifactDir(), `clipboard-${Date.now()}-${randomUUID()}.png`);
+  const filePath = join(
+    getArtifactDir(),
+    `clipboard-${Date.now()}-${randomUUID()}.png`,
+  );
   await writeFile(filePath, png);
   return filePath;
 }
@@ -42,24 +47,26 @@ function buildClipboardContext(params: {
   if (params.hasImage) {
     return {
       kind: "image",
-      imagePath: params.clipboardImagePath
+      imagePath: params.clipboardImagePath,
     };
   }
 
   if (params.clipboardText.trim().length > 0) {
     return {
       kind: "text",
-      text: boundText(params.clipboardText)
+      text: boundText(params.clipboardText),
     };
   }
 
   return {
-    kind: "none"
+    kind: "none",
   };
 }
 
-export async function captureContextSnapshot(options?: CaptureContextOptions): Promise<ContextSnapshot> {
-  const activeAppPromise = getActiveAppContext();
+export async function captureContextSnapshot(
+  options?: CaptureContextOptions,
+): Promise<ContextSnapshot> {
+  const activeApp = await getActiveAppContext();
   const clipboardText = readClipboardText();
   const clipboardImage = readClipboardImage();
   const hasImage = !clipboardImage.isEmpty();
@@ -67,22 +74,21 @@ export async function captureContextSnapshot(options?: CaptureContextOptions): P
     hasImage && options?.persistClipboardImage
       ? await saveClipboardImageToDisk(clipboardImage)
       : undefined;
-  const activeApp = await activeAppPromise;
 
   const clipboard = buildClipboardContext({
     clipboardText,
     hasImage,
-    clipboardImagePath
+    clipboardImagePath,
   });
   const sourceUsed = pickSourceUsed({
     clipboardKind: clipboard.kind,
-    clipboardText
+    clipboardText,
   });
 
   return {
     timestamp: new Date().toISOString(),
     activeApp,
     clipboard,
-    sourceUsed
+    sourceUsed,
   };
 }

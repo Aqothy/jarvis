@@ -85,9 +85,7 @@ export function App(): React.ReactElement {
       await startCapture();
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to start recording.",
+        err instanceof Error ? err.message : "Unable to start recording.",
       );
     }
   }, [refreshPermissions, startCapture]);
@@ -100,6 +98,7 @@ export function App(): React.ReactElement {
       }
 
       setTaskStateNow("running_text");
+      // TODO: could be image too, need to handle image as well
       const textTaskResult = await bridge.runTextTask({
         instruction: transcript,
       });
@@ -107,9 +106,7 @@ export function App(): React.ReactElement {
       setTaskStateNow("idle");
     } catch (err) {
       setTaskStateNow("idle");
-      setError(
-        err instanceof Error ? err.message : "Task failed.",
-      );
+      setError(err instanceof Error ? err.message : "Task failed.");
     }
   }, [bridge, stopCapture]);
 
@@ -141,7 +138,14 @@ export function App(): React.ReactElement {
       unsubscribe();
       teardown({ closeContext: true }).catch(() => undefined);
     };
-  }, [bridge, refreshPermissions, refreshContextPreview, handleStartRecording, handleStopRecording, teardown]);
+  }, [
+    bridge,
+    refreshPermissions,
+    refreshContextPreview,
+    handleStartRecording,
+    handleStopRecording,
+    teardown,
+  ]);
 
   // ---------------------------------------------------------------------------
   // Render
