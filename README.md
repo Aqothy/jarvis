@@ -8,8 +8,9 @@ A clipboard-first AI desktop assistant for macOS that leverages Google Gemini, E
 - **Text Processing**: Intelligent text rewriting, explaining, and querying
 - **Image Generation & Editing**: Create and modify images using Gemini
 - **Image Analysis**: Explain and analyze clipboard images
+- **Background Removal**: Remove backgrounds from images (NEW!)
 - **Weather Queries**: Get weather information for any location
-- **Text-to-Speech**: Read text aloud using ElevenLabs (NEW!)
+- **Text-to-Speech**: Read text aloud using ElevenLabs
 - **Memory System**: Save and recall important user information
 - **Context-Aware**: Adapts tone and behavior based on active application
 
@@ -56,6 +57,9 @@ WEATHER_API_KEY=your_weather_api_key_here
 
 # Required for TTS: ElevenLabs API Key
 ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
+
+# Required for background removal: Remove.bg API Key
+REMOVEBG_API_KEY=your_removebg_api_key_here
 ```
 
 ### Getting API Keys
@@ -64,6 +68,7 @@ ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 2. **Gradium API**: Get from [Gradium](https://gradium.ai)
 3. **Weather API**: Get from [WeatherAPI.com](https://www.weatherapi.com/)
 4. **ElevenLabs API**: Get from [ElevenLabs](https://elevenlabs.io)
+5. **Remove.bg API**: Get from [Remove.bg](https://www.remove.bg/api) (50 free images/month)
 
 ### Running the App
 
@@ -127,6 +132,37 @@ Jarvis will:
 - 👀 Rest your eyes while working
 - ♿ Accessibility support
 
+### Background Removal Feature
+
+Remove backgrounds from images with a simple voice command:
+
+1. Copy an image to your clipboard (e.g., a product photo, portrait, or any image)
+2. Press **Alt+Space** and say:
+   - "Remove the background"
+   - "Delete the background from this image"
+   - "Make the background transparent"
+   - "Remove background"
+
+Jarvis will:
+- Process the image using Remove.bg's AI
+- Remove the background automatically
+- Place the result in your clipboard with a transparent background
+- Ready to paste into any application
+
+**Use Cases:**
+- 📸 Product photography for e-commerce
+- 👤 Profile pictures and avatars
+- 🎨 Graphic design and photo editing
+- 📊 Presentations and marketing materials
+- 🖼️ Social media content creation
+
+**Technical Details:**
+- High-quality AI-powered background removal
+- Supports PNG and JPG/JPEG formats
+- Output is always PNG with transparency
+- Free tier: 50 images/month
+- After free tier: $0.20/image
+
 ### Other Voice Commands
 
 - **Text Rewriting**: "Rewrite this more formally"
@@ -143,7 +179,8 @@ Jarvis will:
 - **gemini-service.ts**: Text processing and task routing
 - **gemini-image-service.ts**: Image generation and editing
 - **gradium-stt-service.ts**: Speech-to-text
-- **elevenlabs-tts-service.ts**: Text-to-speech (NEW!)
+- **elevenlabs-tts-service.ts**: Text-to-speech
+- **background-removal-service.ts**: Background removal (NEW!)
 - **weather-service.ts**: Weather information
 - **memory-service.ts**: User memory management
 - **context-service.ts**: Clipboard and app context capture
@@ -158,7 +195,8 @@ The app uses an intelligent router to determine the appropriate action:
 3. **image_generate**: Generate new images
 4. **image_explain**: Analyze and explain images
 5. **weather_query**: Fetch weather information
-6. **tts_read_aloud**: Read text aloud (NEW!)
+6. **tts_read_aloud**: Read text aloud
+7. **background_remove**: Remove image backgrounds (NEW!)
 
 ## Development
 
@@ -189,6 +227,14 @@ src/
 1. Verify `ELEVENLABS_API_KEY` is set in `.env`
 2. Check that text is copied to clipboard before asking to read aloud
 3. Look at logs for API errors: `~/Library/Logs/jarvis-desktop-mvp/`
+
+### Background Removal Not Working
+
+1. Verify `REMOVEBG_API_KEY` is set in `.env`
+2. Ensure you have copied an image to clipboard before asking to remove background
+3. Check that your API key has remaining credits (50 free/month)
+4. Supported formats: PNG, JPG, JPEG
+5. Look at logs for API errors: `~/Library/Logs/jarvis-desktop-mvp/`
 
 ### No Audio Playback
 

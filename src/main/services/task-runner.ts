@@ -28,6 +28,7 @@ import {
 } from "./gemini-service";
 import { WeatherService } from "./weather-service";
 import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
+import { removeBackground } from "./background-removal-service";
 
 interface WeatherQuery {
   location?: string;
@@ -371,6 +372,60 @@ export async function runTextTask(
       };
     }
     routerRoute = "text_task";
+  }
+
+  if (routerRoute === "background_remove") {
+    if (context.clipboard.kind === "image" && context.clipboard.imagePath) {
+      notify("Jarvis", "Removing background...");
+      const result = await removeBackground({
+        imagePath: context.clipboard.imagePath,
+      });
+
+      if (!result.success) {
+        const errorMsg = `Failed to remove background: ${result.error}`;
+        notify("Jarvis", errorMsg);
+        return {
+          context,
+          sourceText: "",
+          transformedText: errorMsg,
+          promptMode: "direct_query",
+          deliveryMode: "none",
+          inserted: false,
+          copiedToClipboard: false,
+          fallbackCopiedToClipboard: false,
+        };
+      }
+
+      if (result.imageBuffer) {
+        writeClipboardImage(createImageFromBuffer(result.imageBuffer));
+        notify("Jarvis", "Background removed. Image ready to paste.");
+
+        return {
+          context,
+          sourceText: "",
+          transformedText: "Background removed and copied to clipboard.",
+          promptMode: "direct_query",
+          deliveryMode: "none",
+          inserted: false,
+          copiedToClipboard: false,
+          fallbackCopiedToClipboard: false,
+        };
+      }
+    }
+
+    const errorMsg =
+      "No image found to remove background. Please copy an image first.";
+    notify("Jarvis", errorMsg);
+    return {
+      context,
+      sourceText: "",
+      transformedText: errorMsg,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+    };
   }
 
   const plan = {

@@ -92,7 +92,8 @@ export type TaskRouterRoute =
   | "image_generate"
   | "image_explain"
   | "weather_query"
-  | "tts_read_aloud";
+  | "tts_read_aloud"
+  | "background_remove";
 
 interface TaskRouterRawResponse {
   route?: string;
@@ -112,7 +113,8 @@ function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMod
   if (
     route === "image_edit" ||
     route === "image_generate" ||
-    route === "tts_read_aloud"
+    route === "tts_read_aloud" ||
+    route === "background_remove"
   ) {
     return "none";
   }
@@ -150,7 +152,8 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "image_generate" ||
     value === "image_explain" ||
     value === "weather_query" ||
-    value === "tts_read_aloud"
+    value === "tts_read_aloud" ||
+    value === "background_remove"
   );
 }
 
@@ -223,7 +226,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, tts_read_aloud. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit or image_explain unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read EXISTING clipboard/article/document aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud route and deliveryMode none. 8) If user asks for NEW information AND wants it read aloud (e.g., 'what's the weather? read it out loud', 'tell me about Apple stock and speak it'), choose the appropriate route (text_task/weather_query/etc) but set deliveryMode to tts. 9) If instruction ends with phrases like 'read it out loud', 'speak it', 'say it aloud', 'read this out loud', set deliveryMode to tts. 10) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, tts_read_aloud, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read EXISTING clipboard/article/document aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud route and deliveryMode none. 8) If user asks for NEW information AND wants it read aloud (e.g., 'what's the weather? read it out loud', 'tell me about Apple stock and speak it'), choose the appropriate route (text_task/weather_query/etc) but set deliveryMode to tts. 9) If instruction ends with phrases like 'read it out loud', 'speak it', 'say it aloud', 'read this out loud', set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove the background', 'delete background', 'transparent background'), choose background_remove and deliveryMode none. 11) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
