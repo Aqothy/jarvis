@@ -91,6 +91,33 @@ async function deliverTextOutput(params: {
     };
   }
 
+  if (params.deliveryMode === "tts") {
+    notify("Jarvis", "Reading response aloud...");
+    const ttsResult = await ElevenLabsTtsService.readAloud({
+      text: params.transformedText,
+    });
+
+    if (!ttsResult.success) {
+      // Fallback to clipboard if TTS fails
+      writeClipboardText(params.transformedText);
+      notify(
+        "Jarvis",
+        `TTS failed: ${ttsResult.error}. Response copied to clipboard.`,
+      );
+      return {
+        inserted: false,
+        copiedToClipboard: true,
+        fallbackCopiedToClipboard: true,
+      };
+    }
+
+    return {
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+    };
+  }
+
   if (params.deliveryMode === "insert") {
     const inserted = await insertTextAtCursor(params.transformedText);
     if (!inserted) {

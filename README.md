@@ -86,25 +86,46 @@ pnpm build
 
 ### Text-to-Speech Feature
 
-The new TTS feature allows Jarvis to read text aloud using ElevenLabs:
+The TTS feature allows Jarvis to read text aloud using ElevenLabs in two ways:
 
-1. Copy text to your clipboard (e.g., an article, email, or document)
-2. Press **Alt+Space** and say one of the following:
+#### 1. Read Existing Content
+Copy text to your clipboard and have it read aloud:
+
+1. Copy text (e.g., an article, email, or document)
+2. Press **Alt+Space** and say:
    - "Read this aloud"
    - "Read this article"
    - "Speak this text"
-   - "Narrate this"
+
+#### 2. Read Generated Responses (NEW!)
+Have any response read aloud instead of copied/inserted:
+
+1. Press **Alt+Space** and say:
+   - "What's the weather in New York? **Read it out loud**"
+   - "Tell me about Apple stock. **Speak it**"
+   - "Explain what HTML is. **Say it aloud**"
+   - "What's 25 times 47? **Read it out loud**"
 
 Jarvis will:
+- Generate the response (weather, calculations, explanations, etc.)
 - Clean up the text (remove markdown, HTML, code blocks, etc.)
 - Convert it to speech using ElevenLabs
 - Play the audio automatically
 
 **Features:**
-- Automatically extracts readable content from clipboard
-- Supports up to 5000 characters (~5 minutes of speech)
-- Uses natural-sounding voices from ElevenLabs
-- Default voice: Adam (can be customized in code)
+- 🎯 Works with ANY query (weather, text, calculations, explanations)
+- 🧹 Automatically cleans text for better speech quality
+- 🔊 Uses natural-sounding ElevenLabs voices
+- ⚡ Supports up to 5000 characters (~5 minutes of speech)
+- 🔄 Automatic fallback to clipboard if TTS fails
+- 👤 Default voice: Adam (customizable in code)
+
+**Use Cases:**
+- 🚗 Hands-free information while driving
+- 🍳 Get instructions while cooking
+- 🏃 Stay informed while exercising
+- 👀 Rest your eyes while working
+- ♿ Accessibility support
 
 ### Other Voice Commands
 
