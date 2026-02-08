@@ -18,6 +18,10 @@ import {
   writeClipboardText,
 } from "./services/macos-service";
 import {
+  getMemoryText,
+  setMemoryText,
+} from "./services/memory-service";
+import {
   pushGradiumSttAudioChunk,
   startGradiumSttSession,
   stopGradiumSttSession,
@@ -87,6 +91,17 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.captureContextPreview,
     async (): Promise<ContextSnapshot> => {
       return captureContextSnapshot({ persistClipboardImage: false });
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.memoryGetText, async (): Promise<string> => {
+    return getMemoryText();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.memorySetText,
+    async (_event, text: string): Promise<void> => {
+      setMemoryText(text);
     },
   );
 

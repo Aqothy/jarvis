@@ -47,6 +47,12 @@ const api: AppBridge = {
   runImageTask: (request: ImageTaskRequest): Promise<ImageTaskResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.runImageTask, request),
 
+  getMemoryText: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memoryGetText),
+
+  setMemoryText: (text: string): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.memorySetText, text),
+
   onPushToTalkShortcut: (listener: () => void): (() => void) => {
     // Strip the IPC event argument so the renderer only sees a clean callback.
     const handler = () => listener();

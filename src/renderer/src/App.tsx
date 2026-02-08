@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ContextSnapshot, PermissionStatus } from "../../main/types";
+import type {
+  ContextSnapshot,
+  PermissionStatus,
+} from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 
 type TaskState = "idle" | "running_text";
@@ -21,6 +24,8 @@ export function App(): React.ReactElement {
   const [taskState, setTaskState] = useState<TaskState>("idle");
   const taskStateRef = useRef<TaskState>("idle");
   const recordingModeRef = useRef<RecordingMode>("auto");
+  const [memoryText, setMemoryText] = useState<string>("");
+  const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const { captureState, captureStateRef, startCapture, stopCapture, teardown } =
@@ -75,6 +80,27 @@ export function App(): React.ReactElement {
     }
   }, [bridge]);
 
+  const refreshMemories = useCallback(async (): Promise<void> => {
+    try {
+      const text = await bridge.getMemoryText();
+      setMemoryText(text);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load memories.");
+    }
+  }, [bridge]);
+
+  const handleSaveMemoryText = useCallback(async (): Promise<void> => {
+    setMemoryBusy(true);
+    try {
+      await bridge.setMemoryText(memoryText);
+      await refreshMemories();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save memory.");
+    } finally {
+      setMemoryBusy(false);
+    }
+  }, [bridge, memoryText, refreshMemories]);
+
   // ---------------------------------------------------------------------------
   // Recording + task orchestration
   // ---------------------------------------------------------------------------
@@ -119,7 +145,7 @@ export function App(): React.ReactElement {
       setTaskStateNow("idle");
       setError(err instanceof Error ? err.message : "Task failed.");
     }
-  }, [bridge, stopCapture]);
+  }, [bridge, refreshMemories, stopCapture]);
 
   const handlePushToTalk = useCallback(
     async (mode: RecordingMode): Promise<void> => {
@@ -147,6 +173,7 @@ export function App(): React.ReactElement {
 
     refreshPermissions().catch(() => undefined);
     refreshContextPreview().catch(() => undefined);
+    refreshMemories().catch(() => undefined);
 
     const unsubscribePushToTalk = bridge.onPushToTalkShortcut(() => {
       handlePushToTalk("auto").catch(() => undefined);
@@ -166,6 +193,7 @@ export function App(): React.ReactElement {
     bridge,
     refreshPermissions,
     refreshContextPreview,
+    refreshMemories,
     handlePushToTalk,
     teardown,
   ]);
@@ -205,6 +233,30 @@ export function App(): React.ReactElement {
             <button onClick={refreshPermissions}>Refresh</button>
             <button onClick={requestAccessibility}>Request Access</button>
             <button onClick={refreshContextPreview}>Refresh Preview</button>
+          </div>
+        </section>
+
+        <section className="memory-panel">
+          <h3>Memory</h3>
+          <p className="memory-hint">
+            One fact per line. Jarvis uses these lines as user memory context.
+          </p>
+
+          <div className="memory-create">
+            <textarea
+              value={memoryText}
+              onChange={(event) => setMemoryText(event.target.value)}
+              placeholder={"name is anthony\ndog called buns\nfriend called jason"}
+              rows={8}
+            />
+            <div className="memory-create-controls">
+              <button disabled={memoryBusy} onClick={handleSaveMemoryText}>
+                Save Memory
+              </button>
+              <button disabled={memoryBusy} onClick={refreshMemories}>
+                Reload
+              </button>
+            </div>
           </div>
         </section>
 

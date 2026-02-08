@@ -35,7 +35,7 @@ export type TextPromptMode =
   | "direct_query"
   | "dictation_cleanup";
 
-export type TextDeliveryMode = "insert" | "clipboard";
+export type TextDeliveryMode = "insert" | "clipboard" | "none";
 
 export interface TextTaskResult {
   context: ContextSnapshot;
@@ -81,6 +81,8 @@ export interface AppBridge {
   insertTextAtCursor: (text: string) => Promise<InsertTextAtCursorResult>;
   runTextTask: (request: TextTaskRequest) => Promise<TextTaskResult>;
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
+  getMemoryText: () => Promise<string>;
+  setMemoryText: (text: string) => Promise<void>;
   captureContextPreview: () => Promise<ContextSnapshot>;
   onPushToTalkShortcut: (listener: () => void) => () => void;
   onPushToTalkDictationShortcut: (listener: () => void) => () => void;

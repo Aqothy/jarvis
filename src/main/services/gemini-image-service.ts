@@ -30,50 +30,75 @@ function getGeminiClient(): GoogleGenAI {
  * Supports both image editing (when an image is provided) and text-to-image generation.
  */
 export async function transformClipboardImage(params: {
-  imagePath: string;
   instruction: string;
+  imagePath?: string;
 }): Promise<Buffer> {
   const client = getGeminiClient();
   const model = getGeminiImageModel();
+  const mode = typeof params.imagePath === "string" ? "edit" : "generate";
+  console.log(`[Image Task] model="${model}" mode="${mode}"`);
 
-  // Read the input image and convert to base64
-  const inputImage = await readFile(params.imagePath);
-  const base64Image = inputImage.toString("base64");
+  const imageTaskInstruction =
+    mode === "edit"
+      ? `Edit the provided image according to this request and return image output only.\n${params.instruction}`
+      : `Generate a new image according to this request and return image output only.\n${params.instruction}`;
 
-  // Prepare the request with both the instruction and the image
-  // This enables image editing mode where Gemini modifies the existing image
+  const contents: Array<
+    | { text: string }
+    | {
+        inlineData: {
+          mimeType: string;
+          data: string;
+        };
+      }
+  > = [
+    {
+      text: imageTaskInstruction,
+    },
+  ];
+
+  // If an input image is provided, run in image-edit mode.
+  // Without an image, run text-to-image generation.
+  if (typeof params.imagePath === "string") {
+    const inputImage = await readFile(params.imagePath);
+    const base64Image = inputImage.toString("base64");
+    contents.push({
+      inlineData: {
+        mimeType: "image/png",
+        data: base64Image,
+      },
+    });
+  }
+
   const response = await client.models.generateContent({
     model,
-    contents: [
-      {
-        parts: [
-          {
-            text: params.instruction
-          },
-          {
-            inline_data: {
-              mime_type: "image/png",
-              data: base64Image
-            }
-          }
-        ]
-      }
-    ]
+    contents,
+    config: {
+      responseModalities: ["IMAGE"],
+    },
   });
 
-  // Extract the generated image from the response
-  // Gemini returns images as base64 in inline_data parts
-  if (!response.candidates?.[0]?.content?.parts) {
-    throw new Error("Gemini image generation returned no content parts.");
+  // Extract image bytes from any candidate/part that includes inlineData.
+  const candidates = Array.isArray(response.candidates) ? response.candidates : [];
+  for (const candidate of candidates) {
+    const parts = candidate.content?.parts;
+    if (!Array.isArray(parts)) {
+      continue;
+    }
+    for (const part of parts) {
+      const data = part.inlineData?.data;
+      if (typeof data === "string" && data.length > 0) {
+        return Buffer.from(data, "base64");
+      }
+    }
   }
 
-  const parts = response.candidates[0].content.parts;
-  const imagePart = parts.find((part) => part.inline_data?.data);
-
-  if (!imagePart?.inline_data?.data) {
-    throw new Error("Gemini image generation did not return image data.");
-  }
-
-  const base64Output = imagePart.inline_data.data;
-  return Buffer.from(base64Output, "base64");
+  const finishReason =
+    candidates.length > 0 ? String(candidates[0].finishReason ?? "unknown") : "none";
+  const responseText = typeof response.text === "string" ? response.text.trim() : "";
+  const responseTextSuffix =
+    responseText.length > 0 ? ` model_text="${responseText}"` : "";
+  throw new Error(
+    `Gemini image generation returned no image data. model="${model}" mode="${mode}" candidates=${candidates.length} finishReason="${finishReason}"${responseTextSuffix}`,
+  );
 }

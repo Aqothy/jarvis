@@ -6,6 +6,8 @@ export const IPC_CHANNELS = {
   sttAudioChunk: "assistant:stt-audio-chunk",
   sttStop: "assistant:stt-stop",
   captureContextPreview: "assistant:capture-context-preview",
+  memoryGetText: "assistant:memory-get-text",
+  memorySetText: "assistant:memory-set-text",
   insertTextAtCursor: "assistant:insert-text-at-cursor",
   runTextTask: "assistant:run-text-task",
   runImageTask: "assistant:run-image-task",

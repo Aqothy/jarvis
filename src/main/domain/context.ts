@@ -1,18 +1,10 @@
 import type { BoundedText, ClipboardKind } from "../types";
 
-export const MAX_CONTEXT_TEXT_CHARS = 4000;
-
-export function boundText(
-  value: string,
-  limit = MAX_CONTEXT_TEXT_CHARS,
-): BoundedText {
+export function boundText(value: string): BoundedText {
   const totalChars = value.length;
-  if (value.length <= limit) {
-    return { text: value, truncated: false, totalChars };
-  }
   return {
-    text: value.slice(0, limit),
-    truncated: true,
+    text: value,
+    truncated: false,
     totalChars,
   };
 }

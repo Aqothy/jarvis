@@ -48,6 +48,23 @@ type AppPattern = {
   description: string;
 };
 
+const CODING_ENVIRONMENT_APP_PATTERN =
+  /(^|[^a-z])(code|cursor|windsurf|zed)([^a-z]|$)/i;
+const CODING_ENVIRONMENT_NAME_PATTERN =
+  /visual studio code|vscode|code - insiders|code insiders|sublime|atom|vim|nvim|emacs|intellij|pycharm|webstorm|goland|clion|phpstorm|rubymine|rider|android studio|xcode|nova/i;
+
+export function isCodingEnvironmentContext(
+  appName: string,
+  windowTitle?: string,
+): boolean {
+  return (
+    CODING_ENVIRONMENT_APP_PATTERN.test(appName) ||
+    CODING_ENVIRONMENT_NAME_PATTERN.test(appName) ||
+    (typeof windowTitle === "string" &&
+      CODING_ENVIRONMENT_NAME_PATTERN.test(windowTitle))
+  );
+}
+
 /**
  * Application patterns mapped to tone profiles
  * Patterns are checked in order, first match wins
