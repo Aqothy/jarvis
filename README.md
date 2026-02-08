@@ -4,16 +4,42 @@ A clipboard-first AI desktop assistant for macOS that leverages Google Gemini, E
 
 ## Features
 
-- **Voice Input**: Push-to-talk with speech-to-text using Gradium
-- **Text Processing**: Intelligent text rewriting, explaining, and querying
-- **Image Generation & Editing**: Create and modify images using Gemini
-- **Image Analysis**: Explain and analyze clipboard images
-- **Background Removal**: Remove backgrounds from images
-- **Weather Queries**: Get weather information for any location
-- **Google Calendar Integration**: List and view your calendar events (NEW!)
-- **Text-to-Speech**: Read text aloud using ElevenLabs
-- **Memory System**: Save and recall important user information
-- **Context-Aware**: Adapts tone and behavior based on active application
+- **Global Voice Activation**: `Alt+Space` for assistant mode and `Alt+Shift+Space` for dictation mode
+- **Streaming Speech-to-Text**: Real-time Gradium STT with persistent connection and automatic reconnect behavior
+- **Dictation Cleanup Mode**: Cleans spoken filler/corrections and inserts polished text directly at cursor
+- **Clipboard-First Context Engine**: Uses clipboard text/image plus active app/window title to drive task routing
+- **Intelligent Task Router**: Routes requests into `text_task`, `image_edit`, `image_generate`, `image_explain`, `weather_query`, `webpage_read`, `background_remove`, and `calendar_list`
+- **Text Workflows**:
+  - Clipboard rewrite
+  - Clipboard explanation
+  - Direct Q&A
+  - Context-aware drafting with app-specific tone adaptation
+- **Smart Tone + Model Selection**: Picks formal/casual/technical/creative/neutral tone based on active app; switches to coding-focused model in coding environments
+- **Image Workflows**:
+  - Generate new images from prompt
+  - Edit clipboard images from prompt
+  - Explain/analyze clipboard images
+  - Remove background from clipboard images (Remove.bg)
+- **Website Read/Summarize**: Reads and summarizes webpage content from explicit URL or URL found in clipboard
+- **Weather Intelligence**: Weather for any location, optional Celsius/Fahrenheit handling, and current-location fallback
+- **Google Calendar Integration (Read-only)**:
+  - OAuth connect flow from Settings or voice command (`/auth-calendar`)
+  - List events for today, this week, or upcoming
+  - Human-friendly event time formatting
+- **Memory System**: Persistent user memory notes editable in Settings and reused in prompts
+- **Text-to-Speech Output**:
+  - Provider toggle: Gradium or ElevenLabs
+  - Optional "Speak responses" mode
+  - Automatic fallback to overlay if TTS fails
+  - `Ctrl+C` stops active playback
+- **Multi-Window Desktop UX**:
+  - Settings window
+  - Floating push-to-talk pill with live waveform and state indicators
+  - Response overlay for text/image results with transcript/context metadata, quick Copy, and `Esc` dismiss
+- **Permissions + OS Integration**:
+  - Microphone and Accessibility permission checks/request flow
+  - Cursor text insertion with clipboard-preserving paste fallback
+  - Menu bar tray app with global shortcuts and native notifications
 
 ## Setup
 
@@ -98,7 +124,7 @@ pnpm build
 
 ### Text-to-Speech Feature
 
-The TTS feature allows Jarvis to read text aloud using ElevenLabs in two ways:
+The TTS feature allows Jarvis to read text aloud using your selected provider (Gradium or ElevenLabs) in two ways:
 
 #### 1. Read Existing Content
 Copy text to your clipboard and have it read aloud:
@@ -121,16 +147,16 @@ Have any response read aloud instead of copied/inserted:
 Jarvis will:
 - Generate the response (weather, calculations, explanations, etc.)
 - Clean up the text (remove markdown, HTML, code blocks, etc.)
-- Convert it to speech using ElevenLabs
+- Convert it to speech using your selected provider
 - Play the audio automatically
 
 **Features:**
 - 🎯 Works with ANY query (weather, text, calculations, explanations)
-- 🧹 Automatically cleans text for better speech quality
-- 🔊 Uses natural-sounding ElevenLabs voices
-- ⚡ Supports up to 5000 characters (~5 minutes of speech)
-- 🔄 Automatic fallback to clipboard if TTS fails
-- 👤 Default voice: Adam (customizable in code)
+- 🧹 Cleans formatting noise before speech for better playback quality
+- 🔊 Supports both Gradium and ElevenLabs providers
+- ⚡ ElevenLabs path supports up to 5000 characters per read-aloud call
+- 🔄 Automatic fallback to response overlay if TTS fails
+- ⏹️ Press `Ctrl+C` to stop active playback
 
 **Use Cases:**
 - 🚗 Hands-free information while driving
@@ -153,8 +179,8 @@ Remove backgrounds from images with a simple voice command:
 Jarvis will:
 - Process the image using Remove.bg's AI
 - Remove the background automatically
-- Place the result in your clipboard with a transparent background
-- Ready to paste into any application
+- Show the result image in the response overlay
+- Let you copy the processed image from the overlay
 
 **Use Cases:**
 - 📸 Product photography for e-commerce
@@ -222,8 +248,8 @@ Jarvis will:
 
 **Privacy:**
 - Only reads calendar data (cannot create or modify events)
-- Credentials stored locally and encrypted
-- No data sent to third parties
+- Credentials stored locally on your device
+- Calendar access is handled through Google's OAuth + Calendar APIs
 
 ### Other Voice Commands
 
@@ -233,6 +259,8 @@ Jarvis will:
 - **Image Generation**: "Create a sunset logo"
 - **Image Editing**: "Make this image darker"
 - **Image Analysis**: "Describe this image"
+- **Website Summary**: "Summarize this webpage" (uses URL from clipboard if needed)
+- **Calendar Auth Command**: "/auth-calendar"
 
 ## Architecture
 
@@ -244,6 +272,8 @@ Jarvis will:
 - **elevenlabs-tts-service.ts**: Text-to-speech
 - **background-removal-service.ts**: Background removal (NEW!)
 - **weather-service.ts**: Weather information
+- **calendar-service.ts**: Google Calendar event retrieval and formatting
+- **calendar-auth-helper.ts**: Google OAuth flow handling
 - **memory-service.ts**: User memory management
 - **context-service.ts**: Clipboard and app context capture
 - **app-tone-service.ts**: Tone adaptation based on active app
@@ -257,9 +287,9 @@ The app uses an intelligent router to determine the appropriate action:
 3. **image_generate**: Generate new images
 4. **image_explain**: Analyze and explain images
 5. **weather_query**: Fetch weather information
-6. **tts_read_aloud**: Read text aloud
+6. **webpage_read**: Read and summarize website content
 7. **background_remove**: Remove image backgrounds
-8. **calendar_list**: List calendar events (NEW!)
+8. **calendar_list**: List calendar events
 
 ## Development
 

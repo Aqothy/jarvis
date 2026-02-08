@@ -94,11 +94,6 @@ interface CalendarListFunctionArgs {
   max_results?: number;
 }
 
-interface DesktopOrganizeFunctionArgs {
-  scope?: "top_level_files";
-  grouping_strategy?: "file_type";
-}
-
 export type TaskRouterRoute =
   | "text_task"
   | "image_edit"
@@ -107,7 +102,6 @@ export type TaskRouterRoute =
   | "weather_query"
   | "webpage_read"
   | "background_remove"
-  | "desktop_organize"
   | "calendar_list";
 
 interface TaskRouterRawResponse {
@@ -130,8 +124,7 @@ function getDefaultDeliveryModeForRoute(
   if (
     route === "image_edit" ||
     route === "image_generate" ||
-    route === "background_remove" ||
-    route === "desktop_organize"
+    route === "background_remove"
   ) {
     return "none";
   }
@@ -145,10 +138,6 @@ function normalizeDeliveryModeForRoute(
 ): TextDeliveryMode {
   if (route === "webpage_read") {
     return "clipboard";
-  }
-
-  if (route === "desktop_organize") {
-    return "none";
   }
 
   if (route === "text_task") {
@@ -179,7 +168,6 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "weather_query" ||
     value === "webpage_read" ||
     value === "background_remove" ||
-    value === "desktop_organize" ||
     value === "calendar_list"
   );
 }
@@ -279,7 +267,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove, desktop_organize, calendar_list. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) If user asks to organize, clean, or sort Desktop files/folders, choose desktop_organize and deliveryMode none. 10) If user asks about calendar events, schedule, appointments, meetings, or what's on calendar (e.g., 'what's on my calendar', 'list my events', 'what meetings do I have today'), choose calendar_list. 11) For text_task, questions/new information (direct_query) must use deliveryMode clipboard, not insert. 12) Use deliveryMode insert only when user is explicitly rewriting/editing text (clipboard_rewrite or dictation cleanup style requests). 13) Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove, calendar_list. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) If user asks about calendar events, schedule, appointments, meetings, or what's on calendar (e.g., 'what's on my calendar', 'list my events', 'what meetings do I have today'), choose calendar_list. 10) For text_task, questions/new information (direct_query) must use deliveryMode clipboard, not insert. 11) Use deliveryMode insert only when user is explicitly rewriting/editing text (clipboard_rewrite or dictation cleanup style requests). 12) Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
@@ -688,89 +676,6 @@ export async function runWebsiteReadFunctionCall(params: {
   }
 
   return [`Website: ${resolvedUrl}`, "", summaryText].join("\n");
-}
-
-export async function runDesktopOrganizeFunctionCall(params: {
-  instruction: string;
-  activeApp: ActiveAppContext;
-}): Promise<{
-  scope: "top_level_files";
-  groupingStrategy: "file_type";
-}> {
-  const client = getGeminiClient();
-  const model = getGeminiFastModel();
-
-  const response = await client.models.generateContent({
-    model,
-    contents: [
-      `Instruction: ${params.instruction}`,
-      ...buildActiveAppPromptLines(params.activeApp),
-    ].join("\n"),
-    config: {
-      systemInstruction:
-        "You are Jarvis. For Desktop organization requests, call organize_desktop_files exactly once. Use top-level files only and file-type grouping.",
-      tools: [
-        {
-          functionDeclarations: [
-            {
-              name: "organize_desktop_files",
-              description:
-                "Organize the user's Desktop by moving top-level files into file-type folders.",
-              parametersJsonSchema: {
-                type: "object",
-                properties: {
-                  scope: {
-                    type: "string",
-                    enum: ["top_level_files"],
-                    description:
-                      "Organization scope. Must remain top-level files only.",
-                  },
-                  grouping_strategy: {
-                    type: "string",
-                    enum: ["file_type"],
-                    description:
-                      "Grouping strategy. Must remain file_type for this tool.",
-                  },
-                },
-                additionalProperties: false,
-              },
-            },
-          ],
-        },
-      ],
-      toolConfig: {
-        functionCallingConfig: {
-          mode: FunctionCallingConfigMode.ANY,
-          allowedFunctionNames: ["organize_desktop_files"],
-        },
-      },
-      maxOutputTokens: 128,
-      candidateCount: 1,
-      temperature: 0,
-    },
-  });
-
-  const functionCall = response.functionCalls?.[0];
-  if (!functionCall || functionCall.name !== "organize_desktop_files") {
-    throw new Error(
-      "Desktop organization function call was not produced by the model.",
-    );
-  }
-
-  const functionArgs = (functionCall.args ?? {}) as DesktopOrganizeFunctionArgs;
-  const scope =
-    functionArgs.scope === "top_level_files"
-      ? functionArgs.scope
-      : "top_level_files";
-  const groupingStrategy =
-    functionArgs.grouping_strategy === "file_type"
-      ? functionArgs.grouping_strategy
-      : "file_type";
-
-  return {
-    scope,
-    groupingStrategy,
-  };
 }
 
 export async function runCalendarListFunctionCall(params: {
