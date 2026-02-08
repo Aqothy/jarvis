@@ -265,7 +265,7 @@ function createConnectionPromise(): Promise<void> {
 
 function connectSocket(): Promise<void> {
   if (connectionState.shutdownRequested) {
-    throw new Error("Gradium STT connection is shutting down.");
+    connectionState.shutdownRequested = false;
   }
 
   const apiKey = getGradiumApiKey();
@@ -346,7 +346,7 @@ function connectSocket(): Promise<void> {
 
 async function ensureConnectionReady(): Promise<void> {
   if (connectionState.shutdownRequested) {
-    throw new Error("Gradium STT connection is shutting down.");
+    connectionState.shutdownRequested = false;
   }
 
   const socket = connectionState.socket;
@@ -437,6 +437,10 @@ export async function initializeGradiumSttConnection(): Promise<void> {
 }
 
 export async function startGradiumSttSession(): Promise<void> {
+  if (connectionState.shutdownRequested) {
+    connectionState.shutdownRequested = false;
+  }
+
   if (connectionState.activeStream) {
     throw new Error("A Gradium STT stream is already active.");
   }
@@ -450,10 +454,6 @@ export async function startGradiumSttSession(): Promise<void> {
     connectionState.preStreamAudioChunks = [];
 
     await ensureConnectionReady();
-
-    if (connectionState.shutdownRequested) {
-      throw new Error("Gradium STT connection is shutting down.");
-    }
 
     const socket = connectionState.socket;
     if (

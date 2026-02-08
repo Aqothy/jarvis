@@ -17,18 +17,20 @@ import {
   writeClipboardImage,
   writeClipboardText,
 } from "./macos-service";
-import { createMemory, getMemoryPromptContextForQuery } from "./memory-service";
-import { transformClipboardImage } from "./openai-service";
-import { cleanMemoryCandidate, transformText } from "./gemini-service";
+import { getMemoryPromptContext } from "./memory-service";
+import { transformClipboardImage } from "./gemini-image-service";
+import {
+  routeTextTask,
+  runWeatherFunctionCall,
+  type TaskRouterRoute,
+  transformImageToText,
+  transformText,
+} from "./gemini-service";
+import { WeatherService } from "./weather-service";
 
-interface TextTaskPlan {
-  promptMode: TextPromptMode;
-  deliveryMode: TextDeliveryMode;
-  requiresClipboardText: boolean;
-}
-
-interface MemoryAddCommand {
-  content: string;
+interface WeatherQuery {
+  location?: string;
+  useCelsius: boolean;
 }
 
 function getOutputDir(): string {
@@ -45,188 +47,74 @@ function notify(title: string, body: string): void {
   }
 }
 
-function hasExplicitClipboardReference(instruction: string): boolean {
-  const explicitClipboardPatterns = [
-    /\bclipboard\b/,
-    /\bselected text\b/,
-    /\bselection\b/,
-    /\bcopied text\b/,
-    /\bthis text\b/,
-    /\bthis paragraph\b/,
-    /\bthis sentence\b/,
-    /\bthis message\b/,
-    /\bthis email\b/,
-    /\btext above\b/,
-    /\btext below\b/,
-    /\bthe above text\b/,
-    /\bthe below text\b/,
-  ];
-
-  return explicitClipboardPatterns.some((pattern) => pattern.test(instruction));
-}
-
-function normalizeInstruction(instruction: string): string {
-  return instruction.toLowerCase().trim().replace(/\s+/g, " ");
-}
-
-function stripAssistantLeadIn(instruction: string): string {
-  return instruction
-    .replace(/^(hey|hi|yo)\s+(jarvis[,!\s]*)?/i, "")
-    .replace(/^(can|could|would|will)\s+you\s+/i, "")
-    .replace(/^please\s+/i, "")
-    .replace(/^i need you to\s+/i, "")
-    .replace(/^help me\s+/i, "help me ")
-    .trim();
-}
-
-function cleanExtractedMemoryContent(content: string): string {
-  return content
-    .trim()
-    .replace(/^(that|this|it)\s+/i, "")
-    .replace(/[.,;:!?]+$/g, "")
-    .trim();
-}
-
-function hasExplicitMemoryTarget(instruction: string): boolean {
-  return /\b(?:to|in(?:to)?)\s+(?:your\s+)?memory\b/i.test(instruction);
-}
-
-function extractMemoryAddCommand(instruction: string): MemoryAddCommand | null {
-  const cleanedInstruction = stripAssistantLeadIn(instruction.trim());
-  if (cleanedInstruction.length === 0) {
-    return null;
+function parseWeatherQuery(instruction: string): WeatherQuery {
+  let useCelsius = true;
+  if (/\b(fahrenheit|°f)\b/i.test(instruction)) {
+    useCelsius = false;
+  } else if (/\b(celsius|centigrade|°c)\b/i.test(instruction)) {
+    useCelsius = true;
   }
 
-  if (!hasExplicitMemoryTarget(cleanedInstruction)) {
-    return null;
-  }
-
-  const patterns = [
-    /^(.+?)[,.\s]+(?:add|save|remember)\s+(?:that|this|it)?\s*(?:to|in(?:to)?)\s+(?:your\s+)?memory[.!?]*$/i,
-    /^(?:add|save|remember)\s+(.+?)\s+(?:to|in(?:to)?)\s+(?:your\s+)?memory[.!?]*$/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = pattern.exec(cleanedInstruction);
-    if (!match || typeof match[1] !== "string") {
-      continue;
-    }
-
-    const extractedContent = cleanExtractedMemoryContent(
-      match[1]
-        .trim()
-        .replace(/^(hey|hi|yo)\s+jarvis[,!\s]*/i, "")
-        .replace(/^(can|could|would|will)\s+you\s+/i, "")
-        .replace(/^please\s+/i, "")
-        .trim(),
-    );
-
-    if (extractedContent.length === 0) {
-      continue;
-    }
-
-    return {
-      content: extractedContent,
-    };
-  }
-
-  return null;
-}
-
-function resolveTextTaskPlan(instruction: string): TextTaskPlan {
-  const normalizedInstruction = normalizeInstruction(instruction);
-  if (normalizedInstruction.length === 0) {
-    return {
-      promptMode: "dictation_cleanup",
-      deliveryMode: "insert",
-      requiresClipboardText: false,
-    };
-  }
-
-  const routedInstruction = stripAssistantLeadIn(normalizedInstruction);
-
-  const startsWithTransformVerb =
-    /^(rewrite|rephrase|paraphrase|proofread|edit|polish|fix|improve|shorten|expand|translate|summarize)\b/.test(
-      routedInstruction,
-    );
-  const startsWithExplainVerb =
-    /^(explain|analyze|interpret|critique|help me understand|what does|what is|what'?s)\b/.test(
-      routedInstruction,
-    );
-  const startsWithDirectQueryVerb =
-    /^(research|explain|analyze|what|what'?s|who|when|where|why|how|compare|list|find|tell me)\b/.test(
-      routedInstruction,
-    );
-  const startsWithGenerationVerb =
-    /^(write|draft|compose|generate|create)\b/.test(routedInstruction);
-  const referencesLocalText =
-    /\b(this|it|text|paragraph|sentence|message|email|draft)\b/.test(
-      routedInstruction,
-    );
-  const explicitClipboardReference = hasExplicitClipboardReference(
-    normalizedInstruction,
+  const locationMatch = /\b(?:in|for|at)\s+(.+?)(?:\s+(?:today|tonight|tomorrow|now|right now|currently)\b|[?!.,]|$)/i.exec(
+    instruction,
   );
-  const hasAssistantRequestCue =
-    /\b(can|could|would|will)\s+you\b|\bplease\b|\bi need you to\b|\bhelp me\b/.test(
-      normalizedInstruction,
-    );
-  const hasDirectQueryKeyword =
-    /\b(explain|analyze|interpret|critique|research|compare|list|find|tell me|what is|what does|what are|what'?s|who|when|where|why|how)\b/.test(
-      normalizedInstruction,
-    );
+  const rawLocation =
+    locationMatch && typeof locationMatch[1] === "string"
+      ? locationMatch[1].trim()
+      : "";
+  const location = rawLocation.replace(/\bplease\b$/i, "").trim();
 
-  if (explicitClipboardReference || referencesLocalText) {
-    if (startsWithExplainVerb) {
+  return {
+    location: location.length > 0 ? location : undefined,
+    useCelsius,
+  };
+}
+
+function requiresClipboardTextForMode(mode: TextPromptMode): boolean {
+  return mode === "clipboard_rewrite" || mode === "clipboard_explain";
+}
+
+async function deliverTextOutput(params: {
+  transformedText: string;
+  deliveryMode: TextDeliveryMode;
+}): Promise<{
+  inserted: boolean;
+  copiedToClipboard: boolean;
+  fallbackCopiedToClipboard: boolean;
+}> {
+  if (params.deliveryMode === "none") {
+    return {
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+    };
+  }
+
+  if (params.deliveryMode === "insert") {
+    const inserted = await insertTextAtCursor(params.transformedText);
+    if (!inserted) {
+      writeClipboardText(params.transformedText);
+      notify("Jarvis", "Insert failed. Response copied to clipboard.");
       return {
-        promptMode: "clipboard_explain",
-        deliveryMode: "clipboard",
-        requiresClipboardText: true,
+        inserted: false,
+        copiedToClipboard: true,
+        fallbackCopiedToClipboard: true,
       };
     }
 
     return {
-      promptMode: "clipboard_rewrite",
-      deliveryMode: "insert",
-      requiresClipboardText: true,
+      inserted: true,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
     };
   }
 
-  if (startsWithTransformVerb) {
-    return {
-      promptMode: "direct_query",
-      deliveryMode: "insert",
-      requiresClipboardText: false,
-    };
-  }
-
-  if (startsWithGenerationVerb) {
-    return {
-      promptMode: "direct_query",
-      deliveryMode: "insert",
-      requiresClipboardText: false,
-    };
-  }
-
-  if (startsWithDirectQueryVerb) {
-    return {
-      promptMode: "direct_query",
-      deliveryMode: "clipboard",
-      requiresClipboardText: false,
-    };
-  }
-
-  if (hasAssistantRequestCue && hasDirectQueryKeyword) {
-    return {
-      promptMode: "direct_query",
-      deliveryMode: "clipboard",
-      requiresClipboardText: false,
-    };
-  }
-
+  writeClipboardText(params.transformedText);
+  notify("Jarvis", "Response copied to clipboard.");
   return {
-    promptMode: "dictation_cleanup",
-    deliveryMode: "insert",
-    requiresClipboardText: false,
+    inserted: false,
+    copiedToClipboard: true,
+    fallbackCopiedToClipboard: true,
   };
 }
 
@@ -240,112 +128,216 @@ function resolveTextTaskPlan(instruction: string): TextTaskPlan {
 export async function runTextTask(
   request: TextTaskRequest,
 ): Promise<TextTaskResult> {
-  const memoryAddCommand =
-    request.mode === "force_dictation"
-      ? null
-      : extractMemoryAddCommand(request.instruction);
-
-  if (memoryAddCommand) {
+  if (request.mode === "force_dictation") {
     const context = await captureContextSnapshot({
       persistClipboardImage: false,
       includeClipboard: false,
     });
-
-    const cleanedMemory = await cleanMemoryCandidate({
+    const transformedText = await transformText({
       instruction: request.instruction,
-      candidate: memoryAddCommand.content,
+      sourceText: "",
       activeApp: context.activeApp,
+      mode: "dictation_cleanup",
+      memoryContext: [],
+    });
+    const deliveryResult = await deliverTextOutput({
+      transformedText,
+      deliveryMode: "insert",
     });
 
-    if (!cleanedMemory.shouldSave) {
-      notify("Jarvis", "Could not save memory. Try phrasing it more clearly.");
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "dictation_cleanup",
+      deliveryMode: "insert",
+      inserted: deliveryResult.inserted,
+      copiedToClipboard: deliveryResult.copiedToClipboard,
+      fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+    };
+  }
+
+  const context = await captureContextSnapshot({
+    persistClipboardImage: true,
+  });
+
+  let routedInstruction = request.instruction;
+  let routerRoute: TaskRouterRoute = "text_task";
+  let routerTextMode: TextPromptMode = "direct_query";
+  let routerDeliveryMode: TextDeliveryMode = "clipboard";
+
+  const clipboardTextPreview = context.clipboard.text?.text ?? "";
+  try {
+    const routerDecision = await routeTextTask({
+      instruction: request.instruction,
+      clipboardKind: context.clipboard.kind,
+      clipboardTextPreview,
+      activeApp: context.activeApp,
+    });
+    routerRoute = routerDecision.route;
+    routerTextMode = routerDecision.textMode;
+    routerDeliveryMode = routerDecision.deliveryMode;
+    routedInstruction = routerDecision.rewrittenInstruction;
+  } catch {
+    routerRoute = "text_task";
+    routerTextMode = "direct_query";
+    routerDeliveryMode = "clipboard";
+    routedInstruction = request.instruction;
+  }
+  console.log(
+    `[Task Routing] route="${routerRoute}" mode="${routerTextMode}" delivery="${routerDeliveryMode}"`,
+  );
+
+  if (routerRoute === "weather_query") {
+    let transformedText: string;
+    try {
+      transformedText = await runWeatherFunctionCall({
+        instruction: routedInstruction,
+        activeApp: context.activeApp,
+      });
+    } catch (error) {
+      console.warn(
+        "[Weather Function Calling] Falling back to direct weather service:",
+        error,
+      );
+      const weatherQuery = parseWeatherQuery(request.instruction);
+      const weather = weatherQuery.location
+        ? await WeatherService.getWeather(
+            weatherQuery.location,
+            weatherQuery.useCelsius,
+          )
+        : await WeatherService.getWeatherForCurrentLocation(
+            weatherQuery.useCelsius,
+          );
+      transformedText = WeatherService.formatWeather(
+        weather,
+        weatherQuery.useCelsius,
+      );
+    }
+    const weatherDeliveryMode =
+      routerDeliveryMode === "none" ? "clipboard" : routerDeliveryMode;
+    const deliveryResult = await deliverTextOutput({
+      transformedText,
+      deliveryMode: weatherDeliveryMode,
+    });
+
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "direct_query",
+      deliveryMode: weatherDeliveryMode,
+      inserted: deliveryResult.inserted,
+      copiedToClipboard: deliveryResult.copiedToClipboard,
+      fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+    };
+  }
+
+  if (routerRoute === "image_edit") {
+    if (context.clipboard.kind === "image" && context.clipboard.imagePath) {
+      const outputBuffer = await transformClipboardImage({
+        imagePath: context.clipboard.imagePath,
+        instruction: routedInstruction,
+      });
+      writeClipboardImage(createImageFromBuffer(outputBuffer));
+      notify("Jarvis", "Image ready to paste.");
+
       return {
         context,
         sourceText: "",
-        transformedText: "Memory was not saved.",
+        transformedText: "Image edited and copied to clipboard.",
         promptMode: "direct_query",
         deliveryMode: "none",
-        memoryUpdated: false,
         inserted: false,
         copiedToClipboard: false,
         fallbackCopiedToClipboard: false,
       };
     }
+    routerRoute = "text_task";
+  }
 
-    createMemory({
-      content: cleanedMemory.cleanedMemory,
-      kind: cleanedMemory.kind,
-      source: "explicit_voice",
+  if (routerRoute === "image_generate") {
+    const outputBuffer = await transformClipboardImage({
+      instruction: routedInstruction,
     });
-    notify("Jarvis", "Saved to memory.");
+    writeClipboardImage(createImageFromBuffer(outputBuffer));
+    notify("Jarvis", "Generated image ready to paste.");
 
     return {
       context,
       sourceText: "",
-      transformedText: `Saved to memory: ${cleanedMemory.cleanedMemory}`,
+      transformedText: "Image generated and copied to clipboard.",
       promptMode: "direct_query",
       deliveryMode: "none",
-      memoryUpdated: true,
       inserted: false,
       copiedToClipboard: false,
       fallbackCopiedToClipboard: false,
     };
   }
 
-  const context = await captureContextSnapshot({
-    persistClipboardImage: false,
-  });
-  const plan =
-    request.mode === "force_dictation"
-      ? {
-          promptMode: "dictation_cleanup" as const,
-          deliveryMode: "insert" as const,
-          requiresClipboardText: false,
-        }
-      : resolveTextTaskPlan(request.instruction);
+  if (routerRoute === "image_explain") {
+    if (context.clipboard.kind === "image" && context.clipboard.imagePath) {
+      const memoryContext = getMemoryPromptContext();
+      const transformedText = await transformImageToText({
+        instruction: routedInstruction,
+        imagePath: context.clipboard.imagePath,
+        activeApp: context.activeApp,
+        memoryContext,
+      });
+
+      const imageExplainDeliveryMode =
+        routerDeliveryMode === "none" ? "clipboard" : routerDeliveryMode;
+      const deliveryResult = await deliverTextOutput({
+        transformedText,
+        deliveryMode: imageExplainDeliveryMode,
+      });
+
+      return {
+        context,
+        sourceText: "",
+        transformedText,
+        promptMode: "direct_query",
+        deliveryMode: imageExplainDeliveryMode,
+        inserted: deliveryResult.inserted,
+        copiedToClipboard: deliveryResult.copiedToClipboard,
+        fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      };
+    }
+    routerRoute = "text_task";
+  }
+
+  const plan = {
+    promptMode: routerTextMode,
+    deliveryMode: routerDeliveryMode,
+    requiresClipboardText: requiresClipboardTextForMode(routerTextMode),
+  };
   let sourceText = "";
   const memoryContext =
     plan.promptMode === "dictation_cleanup"
       ? []
-      : getMemoryPromptContextForQuery({
-          query: request.instruction,
-        });
+      : getMemoryPromptContext();
 
   if (plan.requiresClipboardText) {
     sourceText = context.clipboard.text?.text ?? "";
     if (sourceText.trim().length === 0) {
-      throw new Error(
-        "No clipboard text found. Copy text to clipboard, then retry.",
-      );
+      plan.promptMode = "direct_query";
+      plan.deliveryMode = "clipboard";
+      plan.requiresClipboardText = false;
     }
   }
 
   const transformedText = await transformText({
-    instruction: request.instruction,
+    instruction: routedInstruction,
     sourceText,
     activeApp: context.activeApp,
     mode: plan.promptMode,
     memoryContext,
   });
 
-  let inserted = false;
-  let copiedToClipboard = false;
-  let fallbackCopiedToClipboard = false;
-
-  if (plan.deliveryMode === "insert") {
-    inserted = await insertTextAtCursor(transformedText);
-    if (!inserted) {
-      writeClipboardText(transformedText);
-      copiedToClipboard = true;
-      fallbackCopiedToClipboard = true;
-      notify("Jarvis", "Insert failed. Response copied to clipboard.");
-    }
-  } else {
-    writeClipboardText(transformedText);
-    copiedToClipboard = true;
-    fallbackCopiedToClipboard = true;
-    notify("Jarvis", "Response copied to clipboard.");
-  }
+  const deliveryResult = await deliverTextOutput({
+    transformedText,
+    deliveryMode: plan.deliveryMode,
+  });
 
   return {
     context,
@@ -353,32 +345,28 @@ export async function runTextTask(
     transformedText,
     promptMode: plan.promptMode,
     deliveryMode: plan.deliveryMode,
-    memoryUpdated: false,
-    inserted,
-    copiedToClipboard,
-    fallbackCopiedToClipboard,
+    inserted: deliveryResult.inserted,
+    copiedToClipboard: deliveryResult.copiedToClipboard,
+    fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
   };
 }
 
 /**
  * Orchestrates the image transformation flow:
- * 1. Verify an image exists in the clipboard.
- * 2. Send image and instructions to OpenAI DALL-E (edits).
+ * 1. Capture clipboard image if present.
+ * 2. Send instruction to Gemini for generation/editing.
  * 3. Put the result back in the clipboard and notify the user.
  */
 export async function runImageTask(
   request: ImageTaskRequest,
 ): Promise<ImageTaskResult> {
   const context = await captureContextSnapshot({ persistClipboardImage: true });
-  if (context.clipboard.kind !== "image" || !context.clipboard.imagePath) {
-    throw new Error(
-      "No clipboard image found. Copy an image to clipboard, then retry.",
-    );
-  }
+  const imagePath =
+    context.clipboard.kind === "image" ? context.clipboard.imagePath : undefined;
 
   const outputBuffer = await transformClipboardImage({
-    imagePath: context.clipboard.imagePath,
     instruction: request.instruction,
+    imagePath,
   });
 
   const image = createImageFromBuffer(outputBuffer);

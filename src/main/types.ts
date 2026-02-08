@@ -29,41 +29,6 @@ export interface TextTaskRequest {
   mode?: "auto" | "force_dictation";
 }
 
-export type MemoryKind =
-  | "preference"
-  | "profile"
-  | "workflow"
-  | "project"
-  | "contact"
-  | "other";
-
-export type MemorySource = "explicit_voice" | "explicit_ui";
-
-export interface MemoryEntry {
-  id: string;
-  content: string;
-  kind: MemoryKind;
-  source: MemorySource;
-  pinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-  lastUsedAt: string | null;
-}
-
-export interface CreateMemoryRequest {
-  content: string;
-  kind: MemoryKind;
-  pinned?: boolean;
-  source?: MemorySource;
-}
-
-export interface UpdateMemoryRequest {
-  id: string;
-  content: string;
-  kind: MemoryKind;
-  pinned: boolean;
-}
-
 export type TextPromptMode =
   | "clipboard_rewrite"
   | "clipboard_explain"
@@ -78,7 +43,6 @@ export interface TextTaskResult {
   transformedText: string;
   promptMode: TextPromptMode;
   deliveryMode: TextDeliveryMode;
-  memoryUpdated: boolean;
   inserted: boolean;
   copiedToClipboard: boolean;
   fallbackCopiedToClipboard: boolean;
@@ -117,10 +81,8 @@ export interface AppBridge {
   insertTextAtCursor: (text: string) => Promise<InsertTextAtCursorResult>;
   runTextTask: (request: TextTaskRequest) => Promise<TextTaskResult>;
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
-  listMemories: () => Promise<MemoryEntry[]>;
-  createMemory: (request: CreateMemoryRequest) => Promise<MemoryEntry>;
-  updateMemory: (request: UpdateMemoryRequest) => Promise<MemoryEntry>;
-  deleteMemory: (id: string) => Promise<void>;
+  getMemoryText: () => Promise<string>;
+  setMemoryText: (text: string) => Promise<void>;
   captureContextPreview: () => Promise<ContextSnapshot>;
   onPushToTalkShortcut: (listener: () => void) => () => void;
   onPushToTalkDictationShortcut: (listener: () => void) => () => void;

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ContextSnapshot,
-  MemoryEntry,
-  MemoryKind,
   PermissionStatus,
 } from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
@@ -15,15 +13,6 @@ const INITIAL_PERMISSIONS: PermissionStatus = {
   accessibility: false,
 };
 
-const MEMORY_KIND_OPTIONS: MemoryKind[] = [
-  "preference",
-  "profile",
-  "workflow",
-  "project",
-  "contact",
-  "other",
-];
-
 export function App(): React.ReactElement {
   const bridge = window.jarvis;
 
@@ -35,9 +24,7 @@ export function App(): React.ReactElement {
   const [taskState, setTaskState] = useState<TaskState>("idle");
   const taskStateRef = useRef<TaskState>("idle");
   const recordingModeRef = useRef<RecordingMode>("auto");
-  const [memories, setMemories] = useState<MemoryEntry[]>([]);
-  const [newMemoryContent, setNewMemoryContent] = useState<string>("");
-  const [newMemoryKind, setNewMemoryKind] = useState<MemoryKind>("other");
+  const [memoryText, setMemoryText] = useState<string>("");
   const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -95,81 +82,24 @@ export function App(): React.ReactElement {
 
   const refreshMemories = useCallback(async (): Promise<void> => {
     try {
-      const entries = await bridge.listMemories();
-      setMemories(entries);
+      const text = await bridge.getMemoryText();
+      setMemoryText(text);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load memories.");
     }
   }, [bridge]);
 
-  const handleCreateMemory = useCallback(async (): Promise<void> => {
-    const content = newMemoryContent.trim();
-    if (content.length === 0) {
-      return;
-    }
-
+  const handleSaveMemoryText = useCallback(async (): Promise<void> => {
     setMemoryBusy(true);
     try {
-      await bridge.createMemory({
-        content,
-        kind: newMemoryKind,
-        source: "explicit_ui",
-      });
-      setNewMemoryContent("");
-      setNewMemoryKind("other");
+      await bridge.setMemoryText(memoryText);
       await refreshMemories();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create memory.");
+      setError(err instanceof Error ? err.message : "Failed to save memory.");
     } finally {
       setMemoryBusy(false);
     }
-  }, [bridge, newMemoryContent, newMemoryKind, refreshMemories]);
-
-  const updateLocalMemory = useCallback(
-    (id: string, updates: Partial<MemoryEntry>): void => {
-      setMemories((previousMemories) =>
-        previousMemories.map((memory) =>
-          memory.id === id ? { ...memory, ...updates } : memory,
-        ),
-      );
-    },
-    [],
-  );
-
-  const handleSaveMemory = useCallback(
-    async (memory: MemoryEntry): Promise<void> => {
-      setMemoryBusy(true);
-      try {
-        await bridge.updateMemory({
-          id: memory.id,
-          content: memory.content,
-          kind: memory.kind,
-          pinned: memory.pinned,
-        });
-        await refreshMemories();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to save memory.");
-      } finally {
-        setMemoryBusy(false);
-      }
-    },
-    [bridge, refreshMemories],
-  );
-
-  const handleDeleteMemory = useCallback(
-    async (id: string): Promise<void> => {
-      setMemoryBusy(true);
-      try {
-        await bridge.deleteMemory(id);
-        await refreshMemories();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete memory.");
-      } finally {
-        setMemoryBusy(false);
-      }
-    },
-    [bridge, refreshMemories],
-  );
+  }, [bridge, memoryText, refreshMemories]);
 
   // ---------------------------------------------------------------------------
   // Recording + task orchestration
@@ -210,9 +140,6 @@ export function App(): React.ReactElement {
         mode,
       });
       setContextPreview(textTaskResult.context);
-      if (textTaskResult.memoryUpdated) {
-        await refreshMemories();
-      }
       setTaskStateNow("idle");
     } catch (err) {
       setTaskStateNow("idle");
@@ -312,95 +239,24 @@ export function App(): React.ReactElement {
         <section className="memory-panel">
           <h3>Memory</h3>
           <p className="memory-hint">
-            Add or edit long-term memory used by Jarvis. Voice command example:
-            "I like coffee, add that to my memory."
+            One fact per line. Jarvis uses these lines as user memory context.
           </p>
 
           <div className="memory-create">
             <textarea
-              value={newMemoryContent}
-              onChange={(event) => setNewMemoryContent(event.target.value)}
-              placeholder="Add a memory..."
-              rows={2}
+              value={memoryText}
+              onChange={(event) => setMemoryText(event.target.value)}
+              placeholder={"name is anthony\ndog called buns\nfriend called jason"}
+              rows={8}
             />
             <div className="memory-create-controls">
-              <select
-                value={newMemoryKind}
-                onChange={(event) =>
-                  setNewMemoryKind(event.target.value as MemoryKind)
-                }
-              >
-                {MEMORY_KIND_OPTIONS.map((kind) => (
-                  <option key={kind} value={kind}>
-                    {kind}
-                  </option>
-                ))}
-              </select>
-              <button disabled={memoryBusy} onClick={handleCreateMemory}>
+              <button disabled={memoryBusy} onClick={handleSaveMemoryText}>
                 Save Memory
               </button>
+              <button disabled={memoryBusy} onClick={refreshMemories}>
+                Reload
+              </button>
             </div>
-          </div>
-
-          <div className="memory-list">
-            {memories.length === 0 && (
-              <div className="memory-empty">No memories saved yet.</div>
-            )}
-
-            {memories.map((memory) => (
-              <div className="memory-item" key={memory.id}>
-                <textarea
-                  value={memory.content}
-                  onChange={(event) =>
-                    updateLocalMemory(memory.id, { content: event.target.value })
-                  }
-                  rows={2}
-                />
-                <div className="memory-item-controls">
-                  <select
-                    value={memory.kind}
-                    onChange={(event) =>
-                      updateLocalMemory(memory.id, {
-                        kind: event.target.value as MemoryKind,
-                      })
-                    }
-                  >
-                    {MEMORY_KIND_OPTIONS.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {kind}
-                      </option>
-                    ))}
-                  </select>
-
-                  <label className="memory-pin-toggle">
-                    <input
-                      checked={memory.pinned}
-                      onChange={(event) =>
-                        updateLocalMemory(memory.id, {
-                          pinned: event.target.checked,
-                        })
-                      }
-                      type="checkbox"
-                    />
-                    Pinned
-                  </label>
-
-                  <button
-                    disabled={memoryBusy}
-                    onClick={() => handleSaveMemory(memory)}
-                  >
-                    Save
-                  </button>
-                  <button
-                    className="danger"
-                    disabled={memoryBusy}
-                    onClick={() => handleDeleteMemory(memory.id)}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
           </div>
         </section>
 

@@ -1,16 +1,13 @@
 import { ipcMain, systemPreferences } from "electron";
 import log from "electron-log/main.js";
 import type {
-  CreateMemoryRequest,
   ContextSnapshot,
   InsertTextAtCursorResult,
   ImageTaskRequest,
   ImageTaskResult,
-  MemoryEntry,
   PermissionStatus,
   TextTaskRequest,
   TextTaskResult,
-  UpdateMemoryRequest,
 } from "./types";
 import { IPC_CHANNELS } from "./ipc-channels";
 import { captureContextSnapshot } from "./services/context-service";
@@ -21,10 +18,8 @@ import {
   writeClipboardText,
 } from "./services/macos-service";
 import {
-  createMemory,
-  deleteMemory,
-  listMemories,
-  updateMemory,
+  getMemoryText,
+  setMemoryText,
 } from "./services/memory-service";
 import {
   pushGradiumSttAudioChunk,
@@ -99,28 +94,14 @@ export function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle(IPC_CHANNELS.memoryList, async (): Promise<MemoryEntry[]> => {
-    return listMemories();
+  ipcMain.handle(IPC_CHANNELS.memoryGetText, async (): Promise<string> => {
+    return getMemoryText();
   });
 
   ipcMain.handle(
-    IPC_CHANNELS.memoryCreate,
-    async (_event, request: CreateMemoryRequest): Promise<MemoryEntry> => {
-      return createMemory(request);
-    },
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.memoryUpdate,
-    async (_event, request: UpdateMemoryRequest): Promise<MemoryEntry> => {
-      return updateMemory(request);
-    },
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.memoryDelete,
-    async (_event, id: string): Promise<void> => {
-      deleteMemory(id);
+    IPC_CHANNELS.memorySetText,
+    async (_event, text: string): Promise<void> => {
+      setMemoryText(text);
     },
   );
 
