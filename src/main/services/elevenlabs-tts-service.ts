@@ -1,12 +1,9 @@
 import log from "electron-log/main.js";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { execFile, type ExecException } from "node:child_process";
 import { unlink, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { app } from "electron";
+import { app, globalShortcut } from "electron";
 import { randomUUID } from "node:crypto";
-
-const execAsync = promisify(exec);
 
 interface TextToSpeechParams {
   text: string;
@@ -20,16 +17,80 @@ interface TextToSpeechResult {
   error?: string;
 }
 
+interface ElevenLabsVoice {
+  voice_id: string;
+  name: string;
+}
+
+interface ElevenLabsVoicesResponse {
+  voices: ElevenLabsVoice[];
+}
+
 /**
  * ElevenLabs Text-to-Speech Service
- * Handles converting text to speech and playing audio
+ * Handles converting text to speech and playing audio.
  */
 export class ElevenLabsTtsService {
-  private static defaultVoice = "Adam"; // Default ElevenLabs voice
+  private static defaultVoice = "Adam";
   private static lastAudioPath: string | null = null;
+  private static activePlayback: ReturnType<typeof execFile> | null = null;
+  private static stopShortcuts = new Set<string>();
+
+  private static delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private static registerStopShortcut(accelerator: string): void {
+    if (this.stopShortcuts.has(accelerator)) {
+      return;
+    }
+    if (!app.isReady()) {
+      return;
+    }
+
+    const registered = globalShortcut.register(accelerator, () => {
+      void this.stopActivePlayback();
+    });
+    if (registered) {
+      this.stopShortcuts.add(accelerator);
+    }
+  }
+
+  private static registerStopShortcuts(): void {
+    this.registerStopShortcut("Ctrl+C");
+  }
+
+  private static unregisterStopShortcuts(): void {
+    for (const accelerator of this.stopShortcuts) {
+      globalShortcut.unregister(accelerator);
+    }
+    this.stopShortcuts.clear();
+  }
+
+  private static async cleanupAudioFile(path: string): Promise<void> {
+    await unlink(path).catch(() => undefined);
+  }
+
+  static async stopActivePlayback(): Promise<void> {
+    const playback = this.activePlayback;
+    this.activePlayback = null;
+
+    if (playback && playback.exitCode === null) {
+      playback.kill("SIGTERM");
+      await this.delay(300);
+    }
+
+    this.unregisterStopShortcuts();
+
+    const audioPath = this.lastAudioPath;
+    this.lastAudioPath = null;
+    if (audioPath) {
+      await this.cleanupAudioFile(audioPath);
+    }
+  }
 
   /**
-   * Convert text to speech using ElevenLabs and optionally play it
+   * Convert text to speech using ElevenLabs and optionally play it.
    */
   static async textToSpeech(
     params: TextToSpeechParams,
@@ -37,10 +98,10 @@ export class ElevenLabsTtsService {
     try {
       const voiceName = params.voiceName || this.defaultVoice;
 
-      // Clean up previous audio file if exists
       if (this.lastAudioPath) {
         try {
-          await unlink(this.lastAudioPath);
+          await this.cleanupAudioFile(this.lastAudioPath);
+          this.lastAudioPath = null;
         } catch (err) {
           log.debug("Failed to clean up previous audio file:", err);
         }
@@ -50,20 +111,22 @@ export class ElevenLabsTtsService {
         `[ElevenLabs TTS] Converting text to speech (${params.text.length} chars)`,
       );
 
-      // Call ElevenLabs MCP text_to_speech tool
-      // Note: This assumes the MCP tool is available via claude-code
-      // In production, you'd need to integrate with the MCP server directly
-      const result = await this.callElevenLabsMcp(params.text, voiceName);
-
+      const result = await this.callElevenLabsApi(params.text, voiceName);
       if (!result.success || !result.audioFilePath) {
         throw new Error(result.error || "Failed to generate speech");
       }
 
       this.lastAudioPath = result.audioFilePath;
 
-      // Auto-play if requested
       if (params.autoPlay) {
-        await this.playAudio(result.audioFilePath);
+        try {
+          await this.playAudio(result.audioFilePath);
+        } finally {
+          await this.cleanupAudioFile(result.audioFilePath);
+          if (this.lastAudioPath === result.audioFilePath) {
+            this.lastAudioPath = null;
+          }
+        }
       }
 
       return {
@@ -81,32 +144,52 @@ export class ElevenLabsTtsService {
     }
   }
 
-  /**
-   * Play an audio file
-   */
   static async playAudio(audioFilePath: string): Promise<void> {
     try {
       log.info(`[ElevenLabs TTS] Playing audio: ${audioFilePath}`);
 
-      // Use platform-specific audio player
       const platform = process.platform;
-      let command: string;
-
       if (platform === "darwin") {
-        // macOS
-        command = `afplay "${audioFilePath}"`;
-      } else if (platform === "linux") {
-        // Linux - try multiple players
-        command = `(paplay "${audioFilePath}" || aplay "${audioFilePath}" || ffplay -nodisp -autoexit "${audioFilePath}")`;
-      } else if (platform === "win32") {
-        // Windows
-        command = `powershell -c (New-Object Media.SoundPlayer "${audioFilePath}").PlaySync()`;
-      } else {
-        throw new Error(`Unsupported platform: ${platform}`);
+        await new Promise<void>((resolve, reject) => {
+          this.registerStopShortcuts();
+
+          const playback = execFile("afplay", [audioFilePath], (error) => {
+            if (this.activePlayback === playback) {
+              this.activePlayback = null;
+            }
+            this.unregisterStopShortcuts();
+
+            if (error) {
+              const execError = error as ExecException;
+              if (execError.signal === "SIGTERM") {
+                resolve();
+                return;
+              }
+              reject(
+                new Error(
+                  execError.message || "afplay process failed unexpectedly.",
+                ),
+              );
+              return;
+            }
+
+            resolve();
+          });
+
+          this.activePlayback = playback;
+        });
+
+        log.info("[ElevenLabs TTS] Audio playback completed");
+        return;
       }
 
-      await execAsync(command);
-      log.info("[ElevenLabs TTS] Audio playback completed");
+      if (platform === "linux" || platform === "win32") {
+        throw new Error(
+          "Playback cancellation support is currently implemented for macOS only.",
+        );
+      }
+
+      throw new Error(`Unsupported platform: ${platform}`);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Unknown playback error";
@@ -115,9 +198,6 @@ export class ElevenLabsTtsService {
     }
   }
 
-  /**
-   * Get ElevenLabs API key from environment
-   */
   private static getApiKey(): string {
     const apiKey = process.env.ELEVENLABS_API_KEY;
     if (!apiKey) {
@@ -128,10 +208,31 @@ export class ElevenLabsTtsService {
     return apiKey;
   }
 
-  /**
-   * Get voice ID for a given voice name
-   */
+  private static getTtsModel(): string {
+    const model =
+      process.env.ELEVENLABS_TTS_MODEL ||
+      process.env.ELEVENLABS_MODEL_ID ||
+      process.env.ELEVENLABS_MODEL;
+    if (!model || model.trim().length === 0) {
+      return "eleven_flash_v2_5";
+    }
+    return model.trim();
+  }
+
+  private static getVoiceIdOverride(): string | null {
+    const voiceId = process.env.ELEVENLABS_TTS_VOICE_ID;
+    if (!voiceId || voiceId.trim().length === 0) {
+      return null;
+    }
+    return voiceId.trim();
+  }
+
   private static async getVoiceId(voiceName: string): Promise<string> {
+    const voiceIdOverride = this.getVoiceIdOverride();
+    if (voiceIdOverride) {
+      return voiceIdOverride;
+    }
+
     const apiKey = this.getApiKey();
 
     try {
@@ -145,39 +246,36 @@ export class ElevenLabsTtsService {
         throw new Error(`Failed to fetch voices: ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data = (await response.json()) as ElevenLabsVoicesResponse;
       const voice = data.voices?.find(
-        (v: { name: string }) =>
-          v.name.toLowerCase() === voiceName.toLowerCase(),
+        (candidate: ElevenLabsVoice) =>
+          candidate.name.toLowerCase() === voiceName.toLowerCase(),
       );
 
       if (!voice) {
-        log.warn(
-          `Voice "${voiceName}" not found, using first available voice`,
-        );
-        return data.voices?.[0]?.voice_id || "21m00Tcm4TlvDq8ikWAM"; // Fallback to Rachel
+        log.warn(`Voice "${voiceName}" not found, using first available voice`);
+        return data.voices?.[0]?.voice_id || "21m00Tcm4TlvDq8ikWAM";
       }
 
       return voice.voice_id;
     } catch (error) {
       log.error("[ElevenLabs TTS] Failed to get voice ID:", error);
-      // Fallback to a known voice ID (Rachel)
       return "21m00Tcm4TlvDq8ikWAM";
     }
   }
 
-  /**
-   * Call ElevenLabs API to generate speech
-   */
-  private static async callElevenLabsMcp(
+  private static async callElevenLabsApi(
     text: string,
     voiceName: string,
   ): Promise<TextToSpeechResult> {
     try {
       const apiKey = this.getApiKey();
       const voiceId = await this.getVoiceId(voiceName);
+      const modelId = this.getTtsModel();
 
-      log.info(`[ElevenLabs TTS] Generating speech with voice: ${voiceName}`);
+      log.info(
+        `[ElevenLabs TTS] Generating speech with voice: ${voiceName}, model: ${modelId}`,
+      );
 
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
@@ -190,7 +288,7 @@ export class ElevenLabsTtsService {
           },
           body: JSON.stringify({
             text,
-            model_id: "eleven_monolingual_v1",
+            model_id: modelId,
             voice_settings: {
               stability: 0.5,
               similarity_boost: 0.75,
@@ -206,17 +304,14 @@ export class ElevenLabsTtsService {
         );
       }
 
-      // Save audio to file
       const audioBuffer = await response.arrayBuffer();
       const outputDir = join(app.getPath("userData"), "tts");
-      await mkdir(outputDir, { recursive: true }); // Ensure directory exists
+      await mkdir(outputDir, { recursive: true });
 
       const audioFilePath = join(outputDir, `speech-${randomUUID()}.mp3`);
-
       await writeFile(audioFilePath, Buffer.from(audioBuffer));
 
       log.info(`[ElevenLabs TTS] Audio saved to: ${audioFilePath}`);
-
       return {
         success: true,
         audioFilePath,
@@ -233,50 +328,28 @@ export class ElevenLabsTtsService {
   }
 
   /**
-   * Extract text content for reading aloud
-   * Cleans up markdown, HTML, and other formatting
+   * Extract text content for reading aloud.
    */
   static extractReadableText(content: string): string {
     let text = content;
 
-    // Remove markdown code blocks
     text = text.replace(/```[\s\S]*?```/g, "");
-
-    // Remove inline code
     text = text.replace(/`[^`]+`/g, "");
-
-    // Remove markdown links but keep text
     text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-
-    // Remove markdown images
     text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, "");
-
-    // Remove HTML tags
     text = text.replace(/<[^>]+>/g, "");
-
-    // Remove markdown headers
     text = text.replace(/^#{1,6}\s+/gm, "");
-
-    // Remove markdown bold/italic
     text = text.replace(/[*_]{1,2}([^*_]+)[*_]{1,2}/g, "$1");
-
-    // Remove URLs
     text = text.replace(/https?:\/\/[^\s]+/g, "");
-
-    // Clean up multiple spaces and newlines
     text = text.replace(/\s+/g, " ").trim();
 
     return text;
   }
 
-  /**
-   * Read text aloud from clipboard or provided text
-   */
   static async readAloud(params: {
     text: string;
     voiceName?: string;
   }): Promise<TextToSpeechResult> {
-    // Extract clean text for reading
     const cleanText = this.extractReadableText(params.text);
 
     if (!cleanText || cleanText.length === 0) {
@@ -286,11 +359,10 @@ export class ElevenLabsTtsService {
       };
     }
 
-    // Limit text length for reasonable speech duration
-    const maxLength = 5000; // ~5 minutes of speech
+    const maxLength = 5000;
     const truncatedText =
       cleanText.length > maxLength
-        ? cleanText.substring(0, maxLength) + "..."
+        ? `${cleanText.substring(0, maxLength)}...`
         : cleanText;
 
     return this.textToSpeech({

@@ -5,23 +5,36 @@ import type {
   InsertTextAtCursorResult,
   ImageTaskRequest,
   ImageTaskResult,
+  OverlayPayload,
   PermissionStatus,
+  SpeechPreferences,
+  SpeechProvider,
   TextTaskRequest,
   TextTaskResult,
 } from "./types";
 import { IPC_CHANNELS } from "./ipc-channels";
 import { captureContextSnapshot } from "./services/context-service";
 import {
+  createImageFromDataUrl,
   getAccessibilityPermissionStatus,
   insertTextAtCursor,
   requestAccessibilityPermission,
+  writeClipboardImage,
   writeClipboardText,
 } from "./services/macos-service";
+import {
+  dismissResponseOverlay,
+  showResponseOverlay,
+} from "./services/response-overlay-service";
 import {
   getMemoryText,
   setMemoryText,
 } from "./services/memory-service";
-import { setTtsEnabled } from "./services/tts-state-service";
+import {
+  getSpeechPreferences,
+  setTtsEnabled,
+  setTtsProvider,
+} from "./services/tts-state-service";
 import {
   pushGradiumSttAudioChunk,
   startGradiumSttSession,
@@ -98,6 +111,22 @@ export function registerIpcHandlers(): void {
   );
 
   ipcMain.handle(
+    IPC_CHANNELS.speechGetPreferences,
+    async (): Promise<SpeechPreferences> => {
+      return getSpeechPreferences();
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ttsSetProvider,
+    async (_event, provider: SpeechProvider): Promise<void> => {
+      if (provider === "gradium" || provider === "elevenlabs") {
+        setTtsProvider(provider);
+      }
+    },
+  );
+
+  ipcMain.handle(
     IPC_CHANNELS.ttsSetEnabled,
     async (_event, enabled: boolean): Promise<void> => {
       setTtsEnabled(enabled === true);
@@ -126,17 +155,20 @@ export function registerIpcHandlers(): void {
       }
 
       const inserted = await insertTextAtCursor(text);
-      let fallbackCopiedToClipboard = false;
 
-      // Fallback: If accessibility-based insertion fails, copy result to clipboard
+      // Fallback: If accessibility-based insertion fails, surface text in the response overlay.
       if (!inserted) {
-        writeClipboardText(text);
-        fallbackCopiedToClipboard = true;
+        showResponseOverlay({
+          kind: "text",
+          text,
+          transcript: text,
+          contextValue: "insertTextAtCursor fallback",
+        });
       }
 
       return {
         inserted,
-        fallbackCopiedToClipboard,
+        fallbackCopiedToClipboard: false,
       };
     },
   );
@@ -154,6 +186,23 @@ export function registerIpcHandlers(): void {
       return runImageTask(request);
     },
   );
+
+  ipcMain.handle(
+    IPC_CHANNELS.overlayCopyContent,
+    async (_event, payload: OverlayPayload): Promise<void> => {
+      if (payload.kind === "text") {
+        writeClipboardText(payload.text);
+        return;
+      }
+
+      const image = createImageFromDataUrl(payload.imageDataUrl);
+      writeClipboardImage(image);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.overlayDismiss, async (): Promise<void> => {
+    dismissResponseOverlay();
+  });
 
   ipcMain.handle(
     IPC_CHANNELS.calendarAuthenticate,

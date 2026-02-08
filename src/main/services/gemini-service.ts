@@ -7,10 +7,7 @@ import type {
   TextDeliveryMode,
   TextPromptMode,
 } from "../types";
-import {
-  AppToneService,
-  isCodingEnvironmentContext,
-} from "./app-tone-service";
+import { AppToneService, isCodingEnvironmentContext } from "./app-tone-service";
 import { WeatherService } from "./weather-service";
 import { CalendarService } from "./calendar-service";
 
@@ -97,6 +94,11 @@ interface CalendarListFunctionArgs {
   max_results?: number;
 }
 
+interface DesktopOrganizeFunctionArgs {
+  scope?: "top_level_files";
+  grouping_strategy?: "file_type";
+}
+
 export type TaskRouterRoute =
   | "text_task"
   | "image_edit"
@@ -104,8 +106,8 @@ export type TaskRouterRoute =
   | "image_explain"
   | "weather_query"
   | "webpage_read"
-  | "tts_read_aloud"
   | "background_remove"
+  | "desktop_organize"
   | "calendar_list";
 
 interface TaskRouterRawResponse {
@@ -122,12 +124,14 @@ export interface TaskRouterDecision {
   rewrittenInstruction: string;
 }
 
-function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMode {
+function getDefaultDeliveryModeForRoute(
+  route: TaskRouterRoute,
+): TextDeliveryMode {
   if (
     route === "image_edit" ||
     route === "image_generate" ||
-    route === "tts_read_aloud" ||
-    route === "background_remove"
+    route === "background_remove" ||
+    route === "desktop_organize"
   ) {
     return "none";
   }
@@ -136,15 +140,23 @@ function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMod
 
 function normalizeDeliveryModeForRoute(
   route: TaskRouterRoute,
+  textMode: TextPromptMode,
   requestedMode: TextDeliveryMode,
 ): TextDeliveryMode {
   if (route === "webpage_read") {
     return "clipboard";
   }
 
-  // TTS delivery mode is always valid.
-  if (requestedMode === "tts") {
-    return "tts";
+  if (route === "desktop_organize") {
+    return "none";
+  }
+
+  if (route === "text_task") {
+    const insertAllowed =
+      textMode === "clipboard_rewrite" || textMode === "dictation_cleanup";
+    if (!insertAllowed && requestedMode === "insert") {
+      return "clipboard";
+    }
   }
 
   if (
@@ -154,10 +166,6 @@ function normalizeDeliveryModeForRoute(
       route === "image_explain")
   ) {
     return "clipboard";
-  }
-  // TTS read aloud route should always use "none" delivery mode
-  if (route === "tts_read_aloud") {
-    return "none";
   }
   return requestedMode;
 }
@@ -170,8 +178,8 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "image_explain" ||
     value === "weather_query" ||
     value === "webpage_read" ||
-    value === "tts_read_aloud" ||
     value === "background_remove" ||
+    value === "desktop_organize" ||
     value === "calendar_list"
   );
 }
@@ -237,7 +245,7 @@ function parseTaskRouterDecision(
     const deliveryMode =
       typeof parsed.deliveryMode === "string" &&
       isTextDeliveryMode(parsed.deliveryMode)
-        ? normalizeDeliveryModeForRoute(route, parsed.deliveryMode)
+        ? normalizeDeliveryModeForRoute(route, textMode, parsed.deliveryMode)
         : getDefaultDeliveryModeForRoute(route);
     const rewrittenInstruction =
       typeof parsed.rewrittenInstruction === "string" &&
@@ -271,7 +279,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, tts_read_aloud, background_remove, calendar_list. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to read existing copied text aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud and deliveryMode none. 9) If user asks for new information and explicitly asks to read/speak it aloud, keep the route (text_task/weather_query/etc.) and set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 11) If user asks about calendar events, schedule, appointments, meetings, or what's on calendar (e.g., 'what's on my calendar', 'list my events', 'what meetings do I have today'), choose calendar_list. 12) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove, desktop_organize, calendar_list. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) If user asks to organize, clean, or sort Desktop files/folders, choose desktop_organize and deliveryMode none. 10) If user asks about calendar events, schedule, appointments, meetings, or what's on calendar (e.g., 'what's on my calendar', 'list my events', 'what meetings do I have today'), choose calendar_list. 11) For text_task, questions/new information (direct_query) must use deliveryMode clipboard, not insert. 12) Use deliveryMode insert only when user is explicitly rewriting/editing text (clipboard_rewrite or dictation cleanup style requests). 13) Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
@@ -633,10 +641,7 @@ export async function runWebsiteReadFunctionCall(params: {
   });
 
   const functionCall = response.functionCalls?.[0];
-  if (
-    !functionCall ||
-    functionCall.name !== "get_readable_website_content"
-  ) {
+  if (!functionCall || functionCall.name !== "get_readable_website_content") {
     throw new Error("Website function call was not produced by the model.");
   }
 
@@ -645,7 +650,7 @@ export async function runWebsiteReadFunctionCall(params: {
     typeof functionArgs.url === "string" ? functionArgs.url.trim() : "";
   const clipboardUrl = extractFirstHttpUrl(params.clipboardText);
   const resolvedUrl =
-    requestedUrl.length > 0 ? requestedUrl : clipboardUrl ?? "";
+    requestedUrl.length > 0 ? requestedUrl : (clipboardUrl ?? "");
 
   if (resolvedUrl.trim().length === 0) {
     throw new Error(
@@ -653,9 +658,8 @@ export async function runWebsiteReadFunctionCall(params: {
     );
   }
 
-  const summaryStyle = functionArgs.summary_style === "detailed"
-    ? "detailed"
-    : "brief";
+  const summaryStyle =
+    functionArgs.summary_style === "detailed" ? "detailed" : "brief";
   const summarySystemPrompt =
     summaryStyle === "detailed"
       ? "Read and summarize the content of the provided website URL. Use Google Search tool when needed to fetch the page content and produce a clear, spoken-friendly summary with important details. Return plain text only."
@@ -683,11 +687,90 @@ export async function runWebsiteReadFunctionCall(params: {
     throw new Error("Website summary generation returned empty content.");
   }
 
-  return [
-    `Website: ${resolvedUrl}`,
-    "",
-    summaryText,
-  ].join("\n");
+  return [`Website: ${resolvedUrl}`, "", summaryText].join("\n");
+}
+
+export async function runDesktopOrganizeFunctionCall(params: {
+  instruction: string;
+  activeApp: ActiveAppContext;
+}): Promise<{
+  scope: "top_level_files";
+  groupingStrategy: "file_type";
+}> {
+  const client = getGeminiClient();
+  const model = getGeminiFastModel();
+
+  const response = await client.models.generateContent({
+    model,
+    contents: [
+      `Instruction: ${params.instruction}`,
+      ...buildActiveAppPromptLines(params.activeApp),
+    ].join("\n"),
+    config: {
+      systemInstruction:
+        "You are Jarvis. For Desktop organization requests, call organize_desktop_files exactly once. Use top-level files only and file-type grouping.",
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: "organize_desktop_files",
+              description:
+                "Organize the user's Desktop by moving top-level files into file-type folders.",
+              parametersJsonSchema: {
+                type: "object",
+                properties: {
+                  scope: {
+                    type: "string",
+                    enum: ["top_level_files"],
+                    description:
+                      "Organization scope. Must remain top-level files only.",
+                  },
+                  grouping_strategy: {
+                    type: "string",
+                    enum: ["file_type"],
+                    description:
+                      "Grouping strategy. Must remain file_type for this tool.",
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: FunctionCallingConfigMode.ANY,
+          allowedFunctionNames: ["organize_desktop_files"],
+        },
+      },
+      maxOutputTokens: 128,
+      candidateCount: 1,
+      temperature: 0,
+    },
+  });
+
+  const functionCall = response.functionCalls?.[0];
+  if (!functionCall || functionCall.name !== "organize_desktop_files") {
+    throw new Error(
+      "Desktop organization function call was not produced by the model.",
+    );
+  }
+
+  const functionArgs = (functionCall.args ?? {}) as DesktopOrganizeFunctionArgs;
+  const scope =
+    functionArgs.scope === "top_level_files"
+      ? functionArgs.scope
+      : "top_level_files";
+  const groupingStrategy =
+    functionArgs.grouping_strategy === "file_type"
+      ? functionArgs.grouping_strategy
+      : "file_type";
+
+  return {
+    scope,
+    groupingStrategy,
+  };
 }
 
 export async function runCalendarListFunctionCall(params: {

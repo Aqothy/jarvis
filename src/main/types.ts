@@ -36,6 +36,12 @@ export type TextPromptMode =
   | "dictation_cleanup";
 
 export type TextDeliveryMode = "insert" | "clipboard" | "none" | "tts";
+export type SpeechProvider = "gradium" | "elevenlabs";
+
+export interface SpeechPreferences {
+  ttsProvider: SpeechProvider;
+  ttsEnabled: boolean;
+}
 
 export interface TextTaskResult {
   context: ContextSnapshot;
@@ -58,6 +64,22 @@ export interface ImageTaskResult {
   context: ContextSnapshot;
   outputImagePath: string;
 }
+
+export interface OverlayTextPayload {
+  kind: "text";
+  text: string;
+  transcript?: string;
+  contextValue?: string;
+}
+
+export interface OverlayImagePayload {
+  kind: "image";
+  imageDataUrl: string;
+  transcript?: string;
+  contextValue?: string;
+}
+
+export type OverlayPayload = OverlayTextPayload | OverlayImagePayload;
 
 export interface InsertTextAtCursorResult {
   inserted: boolean;
@@ -83,10 +105,15 @@ export interface AppBridge {
   insertTextAtCursor: (text: string) => Promise<InsertTextAtCursorResult>;
   runTextTask: (request: TextTaskRequest) => Promise<TextTaskResult>;
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
+  copyOverlayContent: (payload: OverlayPayload) => Promise<void>;
+  dismissOverlay: () => Promise<void>;
+  getSpeechPreferences: () => Promise<SpeechPreferences>;
+  setTtsProvider: (provider: SpeechProvider) => Promise<void>;
   setTtsEnabled: (enabled: boolean) => Promise<void>;
   getMemoryText: () => Promise<string>;
   setMemoryText: (text: string) => Promise<void>;
   captureContextPreview: () => Promise<ContextSnapshot>;
+  onOverlayResponse: (listener: (payload: OverlayPayload) => void) => () => void;
   onPushToTalkShortcut: (listener: () => void) => () => void;
   onPushToTalkDictationShortcut: (listener: () => void) => () => void;
 }

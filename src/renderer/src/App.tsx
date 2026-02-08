@@ -7,7 +7,11 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import type { PermissionStatus } from "../../main/types";
+import type {
+  OverlayPayload,
+  PermissionStatus,
+  SpeechProvider,
+} from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 import {
   Sparkles,
@@ -15,13 +19,15 @@ import {
   Keyboard,
   Brain,
   Volume2,
+  Mic,
   ArrowRight,
   Circle,
   XCircle,
   Check,
+  Copy,
 } from "lucide-react";
 
-type WindowMode = "settings" | "pill";
+type WindowMode = "settings" | "pill" | "overlay";
 type TaskState = "idle" | "running_text";
 type RecordingMode = "auto" | "force_dictation";
 type DisplayState =
@@ -60,7 +66,13 @@ function useAutoClearError(
 
 function getWindowMode(): WindowMode {
   const hash = window.location.hash.toLowerCase();
-  return hash.includes("pill") ? "pill" : "settings";
+  if (hash.includes("overlay")) {
+    return "overlay";
+  }
+  if (hash.includes("pill")) {
+    return "pill";
+  }
+  return "settings";
 }
 
 export function App(): React.ReactElement {
@@ -77,6 +89,10 @@ export function App(): React.ReactElement {
     return <PillWindow />;
   }
 
+  if (mode === "overlay") {
+    return <ResponseOverlayWindow />;
+  }
+
   return <SettingsWindow />;
 }
 
@@ -86,6 +102,8 @@ function SettingsWindow(): React.ReactElement {
   const [permissions, setPermissions] =
     useState<PermissionStatus>(INITIAL_PERMISSIONS);
   const [ttsEnabled, setTtsEnabled] = useState<boolean>(false);
+  const [ttsProvider, setTtsProviderValue] =
+    useState<SpeechProvider>("gradium");
   const [memoryText, setMemoryText] = useState<string>("");
   const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +140,36 @@ function SettingsWindow(): React.ReactElement {
       setError(err instanceof Error ? err.message : "Failed to load memories.");
     }
   }, [bridge]);
+
+  const refreshSpeechPreferences = useCallback(async (): Promise<void> => {
+    try {
+      const preferences = await bridge.getSpeechPreferences();
+      setTtsProviderValue(preferences.ttsProvider);
+      setTtsEnabled(preferences.ttsEnabled);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load speech preferences.",
+      );
+    }
+  }, [bridge]);
+
+  const handleTtsProviderToggle = useCallback(
+    async (provider: SpeechProvider): Promise<void> => {
+      const previous = ttsProvider;
+      setTtsProviderValue(provider);
+      try {
+        await bridge.setTtsProvider(provider);
+      } catch (err) {
+        setTtsProviderValue(previous);
+        setError(
+          err instanceof Error ? err.message : "Failed to set TTS provider.",
+        );
+      }
+    },
+    [bridge, ttsProvider],
+  );
 
   const handleTtsToggle = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -161,7 +209,8 @@ function SettingsWindow(): React.ReactElement {
 
     refreshPermissions().catch(() => undefined);
     refreshMemories().catch(() => undefined);
-  }, [bridge, refreshMemories, refreshPermissions]);
+    refreshSpeechPreferences().catch(() => undefined);
+  }, [bridge, refreshMemories, refreshPermissions, refreshSpeechPreferences]);
 
   return (
     <main className="app-shell app-shell-settings">
@@ -257,6 +306,55 @@ function SettingsWindow(): React.ReactElement {
           <section className="card card-wide">
             <div className="card-header">
               <div className="card-icon">
+                <Mic size={16} />
+              </div>
+              <h2>Speech Providers</h2>
+            </div>
+
+            <div className="card-content">
+              <div className="provider-group">
+                <span className="provider-label">Text-to-Speech</span>
+                <div className="provider-row">
+                  <span className="toggle-title">Gradium</span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={ttsProvider === "gradium"}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          handleTtsProviderToggle("gradium").catch(
+                            () => undefined,
+                          );
+                        }
+                      }}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+                <div className="provider-row">
+                  <span className="toggle-title">ElevenLabs</span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={ttsProvider === "elevenlabs"}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          handleTtsProviderToggle("elevenlabs").catch(
+                            () => undefined,
+                          );
+                        }
+                      }}
+                    />
+                    <span className="switch-slider" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card card-wide">
+            <div className="card-header">
+              <div className="card-icon">
                 <Volume2 size={16} />
               </div>
               <h2>Voice Output</h2>
@@ -267,7 +365,7 @@ function SettingsWindow(): React.ReactElement {
                 <div className="toggle-copy">
                   <span className="toggle-title">Speak responses</span>
                   <span className="toggle-desc">
-                    Replaces clipboard copy outputs with Gradium TTS playback.
+                    Replaces response overlay output with the selected TTS provider.
                   </span>
                 </div>
                 <label className="switch">
@@ -325,6 +423,116 @@ function SettingsWindow(): React.ReactElement {
       </div>
 
       <div className={`error-toast ${error ? "visible" : ""}`}>{error}</div>
+    </main>
+  );
+}
+
+function ResponseOverlayWindow(): React.ReactElement {
+  const bridge = window.jarvis;
+  const [payload, setPayload] = useState<OverlayPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const transcript = payload?.transcript?.trim() ?? "";
+  const contextValue = payload?.contextValue ?? "";
+
+  useAutoClearError(error, setError);
+
+  const handleDismiss = useCallback(async (): Promise<void> => {
+    try {
+      await bridge.dismissOverlay();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to dismiss response overlay.",
+      );
+    }
+  }, [bridge]);
+
+  const handleCopy = useCallback(async (): Promise<void> => {
+    if (!payload) {
+      return;
+    }
+
+    try {
+      await bridge.copyOverlayContent(payload);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy response.");
+    }
+  }, [bridge, payload]);
+
+  useEffect(() => {
+    const unsubscribe = bridge.onOverlayResponse((nextPayload: OverlayPayload) => {
+      setPayload(nextPayload);
+      setCopied(false);
+      setError(null);
+    });
+
+    return () => unsubscribe();
+  }, [bridge]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      handleDismiss().catch(() => undefined);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleDismiss]);
+
+  return (
+    <main className="app-shell app-shell-overlay">
+      <section className="response-overlay">
+        {(transcript.length > 0 || contextValue.length > 0) && (
+          <div className="response-overlay-meta">
+            {transcript.length > 0 && (
+              <p className="response-overlay-transcript">
+                <span className="response-overlay-label">Transcript</span>
+                {transcript}
+              </p>
+            )}
+            {contextValue.length > 0 && (
+              <p className="response-overlay-context">
+                <span className="response-overlay-label">Context</span>
+                {contextValue}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="response-overlay-inner">
+          {payload?.kind === "image" ? (
+            <img
+              src={payload.imageDataUrl}
+              className="response-overlay-image"
+              alt="Jarvis generated response"
+            />
+          ) : (
+            <p className="response-overlay-text">{payload?.text ?? ""}</p>
+          )}
+
+          <button
+            type="button"
+            className="response-overlay-copy"
+            onClick={() => {
+              handleCopy().catch(() => undefined);
+            }}
+          >
+            <Copy size={14} />
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <span className="response-overlay-hint">Press Esc to dismiss</span>
+      </section>
+
+      <div className={`error-toast error-toast-overlay ${error ? "visible" : ""}`}>
+        {error}
+      </div>
     </main>
   );
 }
