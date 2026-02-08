@@ -27,6 +27,7 @@ import {
   transformText,
 } from "./gemini-service";
 import { WeatherService } from "./weather-service";
+import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
 
 interface WeatherQuery {
   location?: string;
@@ -230,6 +231,45 @@ export async function runTextTask(
       inserted: deliveryResult.inserted,
       copiedToClipboard: deliveryResult.copiedToClipboard,
       fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+    };
+  }
+
+  if (routerRoute === "tts_read_aloud") {
+    const textToRead = context.clipboard.text?.text ?? "";
+    if (!textToRead || textToRead.trim().length === 0) {
+      const errorMsg =
+        "No text found to read aloud. Please copy some text first.";
+      notify("Jarvis", errorMsg);
+      return {
+        context,
+        sourceText: "",
+        transformedText: errorMsg,
+        promptMode: "direct_query",
+        deliveryMode: "none",
+        inserted: false,
+        copiedToClipboard: false,
+        fallbackCopiedToClipboard: false,
+      };
+    }
+
+    notify("Jarvis", "Reading text aloud...");
+    const ttsResult = await ElevenLabsTtsService.readAloud({
+      text: textToRead,
+    });
+
+    const resultText = ttsResult.success
+      ? `Successfully read ${textToRead.length} characters aloud.`
+      : `Failed to read text aloud: ${ttsResult.error}`;
+
+    return {
+      context,
+      sourceText: textToRead,
+      transformedText: resultText,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
     };
   }
 

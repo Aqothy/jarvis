@@ -91,7 +91,8 @@ export type TaskRouterRoute =
   | "image_edit"
   | "image_generate"
   | "image_explain"
-  | "weather_query";
+  | "weather_query"
+  | "tts_read_aloud";
 
 interface TaskRouterRawResponse {
   route?: string;
@@ -108,7 +109,11 @@ export interface TaskRouterDecision {
 }
 
 function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMode {
-  if (route === "image_edit" || route === "image_generate") {
+  if (
+    route === "image_edit" ||
+    route === "image_generate" ||
+    route === "tts_read_aloud"
+  ) {
     return "none";
   }
   return "clipboard";
@@ -126,6 +131,10 @@ function normalizeDeliveryModeForRoute(
   ) {
     return "clipboard";
   }
+  // TTS should always use "none" delivery mode
+  if (route === "tts_read_aloud") {
+    return "none";
+  }
   return requestedMode;
 }
 
@@ -135,7 +144,8 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "image_edit" ||
     value === "image_generate" ||
     value === "image_explain" ||
-    value === "weather_query"
+    value === "weather_query" ||
+    value === "tts_read_aloud"
   );
 }
 
@@ -203,7 +213,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit or image_explain unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, tts_read_aloud. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit or image_explain unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read aloud, speak, narrate, or vocalize text (e.g., 'read this article', 'read this aloud', 'speak this'), choose tts_read_aloud and deliveryMode none. 8) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
