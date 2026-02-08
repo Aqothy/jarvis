@@ -13,17 +13,20 @@ import { join } from "node:path";
 import log from "electron-log/main.js";
 import { registerIpcHandlers } from "./ipc";
 import { IPC_CHANNELS } from "./ipc-channels";
+import type { OverlayPayload } from "./types";
+import { setResponseOverlayHandlers } from "./services/response-overlay-service";
 import {
   initializeGradiumSttConnection,
   shutdownGradiumSttConnection,
 } from "./services/gradium-stt-service";
 
-type RendererHash = "#settings" | "#pill";
+type RendererHash = "#settings" | "#pill" | "#overlay";
 
 log.initialize();
 
 let settingsWindow: BrowserWindow | null = null;
 let pillWindow: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let cachedAppIcon: Electron.NativeImage | null = null;
@@ -143,6 +146,69 @@ function showPillWindow(): void {
   pillWindow.moveTop();
 }
 
+function positionOverlayWindow(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  const currentBounds = overlayWindow.getBounds();
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const area = display.workArea;
+
+  const x = Math.round(area.x + (area.width - currentBounds.width) / 2);
+  const y = Math.round(area.y + 24);
+
+  overlayWindow.setPosition(x, y, false);
+}
+
+function showOverlayWindow(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  positionOverlayWindow();
+
+  if (overlayWindow.isMinimized()) {
+    overlayWindow.restore();
+  }
+
+  if (!overlayWindow.isVisible()) {
+    overlayWindow.show();
+  }
+
+  overlayWindow.focus();
+  overlayWindow.moveTop();
+}
+
+function hideOverlayWindow(): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  overlayWindow.hide();
+}
+
+function emitOverlayResponse(payload: OverlayPayload): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    createOverlayWindow();
+  }
+
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  if (overlayWindow.webContents.isLoading()) {
+    overlayWindow.webContents.once("did-finish-load", () => {
+      overlayWindow?.webContents.send(IPC_CHANNELS.overlayResponse, payload);
+      showOverlayWindow();
+    });
+    return;
+  }
+
+  overlayWindow.webContents.send(IPC_CHANNELS.overlayResponse, payload);
+  showOverlayWindow();
+}
+
 function createPillWindow(): void {
   if (pillWindow && !pillWindow.isDestroyed()) {
     return;
@@ -184,6 +250,57 @@ function createPillWindow(): void {
 
   pillWindow.on("closed", () => {
     pillWindow = null;
+  });
+}
+
+function createOverlayWindow(): void {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    return;
+  }
+
+  overlayWindow = new BrowserWindow({
+    show: false,
+    width: 720,
+    height: 220,
+    icon: getWindowIcon(),
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    movable: false,
+    focusable: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: resolvePreloadPath(),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  overlayWindow.setAlwaysOnTop(true, "screen-saver");
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  loadRendererRoute(overlayWindow, "#overlay");
+
+  overlayWindow.on("ready-to-show", () => {
+    positionOverlayWindow();
+  });
+
+  overlayWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type === "keyDown" && input.key === "Escape") {
+      event.preventDefault();
+      hideOverlayWindow();
+    }
+  });
+
+  overlayWindow.on("closed", () => {
+    overlayWindow = null;
   });
 }
 
@@ -351,12 +468,24 @@ app.whenReady().then(() => {
   });
 
   createPillWindow();
+  createOverlayWindow();
+  setResponseOverlayHandlers({
+    onShow: (payload: OverlayPayload) => {
+      emitOverlayResponse(payload);
+    },
+    onDismiss: () => {
+      hideOverlayWindow();
+    },
+  });
   createStatusTray();
   registerPushToTalkShortcuts();
 
   screen.on("display-metrics-changed", () => positionPillWindow());
   screen.on("display-added", () => positionPillWindow());
   screen.on("display-removed", () => positionPillWindow());
+  screen.on("display-metrics-changed", () => positionOverlayWindow());
+  screen.on("display-added", () => positionOverlayWindow());
+  screen.on("display-removed", () => positionOverlayWindow());
 
   if (process.platform === "darwin") {
     app.dock.hide();

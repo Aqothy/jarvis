@@ -7,7 +7,11 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import type { PermissionStatus, SpeechProvider } from "../../main/types";
+import type {
+  OverlayPayload,
+  PermissionStatus,
+  SpeechProvider,
+} from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
 import {
   Sparkles,
@@ -20,9 +24,10 @@ import {
   Circle,
   XCircle,
   Check,
+  Copy,
 } from "lucide-react";
 
-type WindowMode = "settings" | "pill";
+type WindowMode = "settings" | "pill" | "overlay";
 type TaskState = "idle" | "running_text";
 type RecordingMode = "auto" | "force_dictation";
 type DisplayState =
@@ -61,7 +66,13 @@ function useAutoClearError(
 
 function getWindowMode(): WindowMode {
   const hash = window.location.hash.toLowerCase();
-  return hash.includes("pill") ? "pill" : "settings";
+  if (hash.includes("overlay")) {
+    return "overlay";
+  }
+  if (hash.includes("pill")) {
+    return "pill";
+  }
+  return "settings";
 }
 
 export function App(): React.ReactElement {
@@ -76,6 +87,10 @@ export function App(): React.ReactElement {
 
   if (mode === "pill") {
     return <PillWindow />;
+  }
+
+  if (mode === "overlay") {
+    return <ResponseOverlayWindow />;
   }
 
   return <SettingsWindow />;
@@ -350,7 +365,7 @@ function SettingsWindow(): React.ReactElement {
                 <div className="toggle-copy">
                   <span className="toggle-title">Speak responses</span>
                   <span className="toggle-desc">
-                    Replaces clipboard copy outputs with selected TTS provider.
+                    Replaces response overlay output with the selected TTS provider.
                   </span>
                 </div>
                 <label className="switch">
@@ -408,6 +423,116 @@ function SettingsWindow(): React.ReactElement {
       </div>
 
       <div className={`error-toast ${error ? "visible" : ""}`}>{error}</div>
+    </main>
+  );
+}
+
+function ResponseOverlayWindow(): React.ReactElement {
+  const bridge = window.jarvis;
+  const [payload, setPayload] = useState<OverlayPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const transcript = payload?.transcript?.trim() ?? "";
+  const contextValue = payload?.contextValue ?? "";
+
+  useAutoClearError(error, setError);
+
+  const handleDismiss = useCallback(async (): Promise<void> => {
+    try {
+      await bridge.dismissOverlay();
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to dismiss response overlay.",
+      );
+    }
+  }, [bridge]);
+
+  const handleCopy = useCallback(async (): Promise<void> => {
+    if (!payload) {
+      return;
+    }
+
+    try {
+      await bridge.copyOverlayContent(payload);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy response.");
+    }
+  }, [bridge, payload]);
+
+  useEffect(() => {
+    const unsubscribe = bridge.onOverlayResponse((nextPayload: OverlayPayload) => {
+      setPayload(nextPayload);
+      setCopied(false);
+      setError(null);
+    });
+
+    return () => unsubscribe();
+  }, [bridge]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      event.preventDefault();
+      handleDismiss().catch(() => undefined);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleDismiss]);
+
+  return (
+    <main className="app-shell app-shell-overlay">
+      <section className="response-overlay">
+        {(transcript.length > 0 || contextValue.length > 0) && (
+          <div className="response-overlay-meta">
+            {transcript.length > 0 && (
+              <p className="response-overlay-transcript">
+                <span className="response-overlay-label">Transcript</span>
+                {transcript}
+              </p>
+            )}
+            {contextValue.length > 0 && (
+              <p className="response-overlay-context">
+                <span className="response-overlay-label">Context</span>
+                {contextValue}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="response-overlay-inner">
+          {payload?.kind === "image" ? (
+            <img
+              src={payload.imageDataUrl}
+              className="response-overlay-image"
+              alt="Jarvis generated response"
+            />
+          ) : (
+            <p className="response-overlay-text">{payload?.text ?? ""}</p>
+          )}
+
+          <button
+            type="button"
+            className="response-overlay-copy"
+            onClick={() => {
+              handleCopy().catch(() => undefined);
+            }}
+          >
+            <Copy size={14} />
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+        <span className="response-overlay-hint">Press Esc to dismiss</span>
+      </section>
+
+      <div className={`error-toast error-toast-overlay ${error ? "visible" : ""}`}>
+        {error}
+      </div>
     </main>
   );
 }

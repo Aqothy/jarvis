@@ -70,6 +70,14 @@ body[data-window-mode="pill"] #root {
   background: transparent;
 }
 
+body[data-window-mode="overlay"] {
+  background: transparent;
+}
+
+body[data-window-mode="overlay"] #root {
+  background: transparent;
+}
+
 /* ============================================
    App Shell
    ============================================ */
@@ -88,6 +96,13 @@ body[data-window-mode="pill"] #root {
 
 .app-shell.app-shell-pill .pill-bar {
   bottom: 12px;
+}
+
+.app-shell.app-shell-overlay {
+  background: transparent;
+  justify-content: flex-start;
+  align-items: center;
+  padding-top: 16px;
 }
 
 /* ============================================
@@ -521,6 +536,113 @@ kbd {
 }
 
 /* ============================================
+   Response Overlay
+   ============================================ */
+
+.response-overlay {
+  width: min(680px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  background: rgba(18, 18, 18, 0.94);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.35);
+  -webkit-app-region: no-drag;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+}
+
+.response-overlay-inner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.response-overlay-meta {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.response-overlay-label {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-ghost);
+}
+
+.response-overlay-transcript,
+.response-overlay-context {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.response-overlay-context {
+  max-height: 72px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+}
+
+.response-overlay-text {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  max-height: none;
+  overflow: visible;
+  padding-right: 6px;
+}
+
+.response-overlay-image {
+  flex: 1;
+  width: 100%;
+  max-height: 150px;
+  border-radius: 10px;
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--card-border);
+}
+
+.response-overlay-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  background: var(--ember);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.response-overlay-copy:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.response-overlay-hint {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--text-ghost);
+}
+
+/* ============================================
    Floating Pill Bar - Voice Recording Overlay
    ============================================ */
 
@@ -898,5 +1020,12 @@ kbd {
   top: 4px;
   bottom: auto;
   max-width: 420px;
+  background: rgba(17, 17, 17, 0.95);
+}
+
+.error-toast.error-toast-overlay {
+  top: 88px;
+  bottom: auto;
+  max-width: 520px;
   background: rgba(17, 17, 17, 0.95);
 }

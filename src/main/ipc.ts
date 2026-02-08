@@ -5,6 +5,7 @@ import type {
   InsertTextAtCursorResult,
   ImageTaskRequest,
   ImageTaskResult,
+  OverlayPayload,
   PermissionStatus,
   SpeechPreferences,
   SpeechProvider,
@@ -14,11 +15,17 @@ import type {
 import { IPC_CHANNELS } from "./ipc-channels";
 import { captureContextSnapshot } from "./services/context-service";
 import {
+  createImageFromDataUrl,
   getAccessibilityPermissionStatus,
   insertTextAtCursor,
   requestAccessibilityPermission,
+  writeClipboardImage,
   writeClipboardText,
 } from "./services/macos-service";
+import {
+  dismissResponseOverlay,
+  showResponseOverlay,
+} from "./services/response-overlay-service";
 import {
   getMemoryText,
   setMemoryText,
@@ -146,17 +153,20 @@ export function registerIpcHandlers(): void {
       }
 
       const inserted = await insertTextAtCursor(text);
-      let fallbackCopiedToClipboard = false;
 
-      // Fallback: If accessibility-based insertion fails, copy result to clipboard
+      // Fallback: If accessibility-based insertion fails, surface text in the response overlay.
       if (!inserted) {
-        writeClipboardText(text);
-        fallbackCopiedToClipboard = true;
+        showResponseOverlay({
+          kind: "text",
+          text,
+          transcript: text,
+          contextValue: "insertTextAtCursor fallback",
+        });
       }
 
       return {
         inserted,
-        fallbackCopiedToClipboard,
+        fallbackCopiedToClipboard: false,
       };
     },
   );
@@ -174,4 +184,21 @@ export function registerIpcHandlers(): void {
       return runImageTask(request);
     },
   );
+
+  ipcMain.handle(
+    IPC_CHANNELS.overlayCopyContent,
+    async (_event, payload: OverlayPayload): Promise<void> => {
+      if (payload.kind === "text") {
+        writeClipboardText(payload.text);
+        return;
+      }
+
+      const image = createImageFromDataUrl(payload.imageDataUrl);
+      writeClipboardImage(image);
+    },
+  );
+
+  ipcMain.handle(IPC_CHANNELS.overlayDismiss, async (): Promise<void> => {
+    dismissResponseOverlay();
+  });
 }

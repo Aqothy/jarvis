@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
+  ContextSnapshot,
   ImageTaskRequest,
   ImageTaskResult,
   SpeechProvider,
@@ -16,11 +17,10 @@ import { captureContextSnapshot } from "./context-service";
 import {
   createImageFromBuffer,
   insertTextAtCursor,
-  writeClipboardImage,
-  writeClipboardText,
 } from "./macos-service";
 import { getMemoryPromptContext } from "./memory-service";
 import { transformClipboardImage } from "./gemini-image-service";
+import { showResponseOverlay } from "./response-overlay-service";
 import {
   routeTextTask,
   runWeatherFunctionCall,
@@ -104,6 +104,60 @@ function truncateForNotification(value: string, limit: number): string {
   return `${value.slice(0, limit)}...`;
 }
 
+function buildContextValue(context: ContextSnapshot): string {
+  return JSON.stringify(context);
+}
+
+function buildEffectiveImageGenerateContextValue(params: {
+  instruction: string;
+  activeAppName: string;
+  activeWindowTitle: string;
+}): string {
+  return JSON.stringify({
+    route: "image_generate",
+    instruction: params.instruction,
+    inputImageProvided: false,
+    sourceUsed: "none",
+    activeApp: {
+      name: params.activeAppName,
+      windowTitle: params.activeWindowTitle,
+    },
+  });
+}
+
+function showTextResultOverlay(params: {
+  text: string;
+  transcript?: string;
+  context?: ContextSnapshot;
+  contextValue?: string;
+}): void {
+  showResponseOverlay({
+    kind: "text",
+    text: params.text,
+    transcript: params.transcript,
+    contextValue:
+      params.contextValue ??
+      (params.context ? buildContextValue(params.context) : undefined),
+  });
+}
+
+function showImageResultOverlay(params: {
+  imageBuffer: Buffer;
+  transcript?: string;
+  context?: ContextSnapshot;
+  contextValue?: string;
+}): void {
+  const image = createImageFromBuffer(params.imageBuffer);
+  showResponseOverlay({
+    kind: "image",
+    imageDataUrl: image.toDataURL(),
+    transcript: params.transcript,
+    contextValue:
+      params.contextValue ??
+      (params.context ? buildContextValue(params.context) : undefined),
+  });
+}
+
 function parseWeatherQuery(instruction: string): WeatherQuery {
   let useCelsius = true;
   if (/\b(fahrenheit|°f)\b/i.test(instruction)) {
@@ -136,6 +190,8 @@ async function deliverTextOutput(params: {
   deliveryMode: TextDeliveryMode;
   ttsEnabled: boolean;
   ttsProvider: SpeechProvider;
+  transcript: string;
+  context: ContextSnapshot;
 }): Promise<{
   inserted: boolean;
   copiedToClipboard: boolean;
@@ -189,26 +245,34 @@ async function deliverTextOutput(params: {
       }
 
       const errorMessage = ttsResult.error || "TTS playback failed.";
-      writeClipboardText(params.transformedText);
+      showTextResultOverlay({
+        text: params.transformedText,
+        transcript: params.transcript,
+        context: params.context,
+      });
       notify(
         "Jarvis",
-        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
+        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response is in the overlay.`,
       );
       return {
         inserted: false,
-        copiedToClipboard: true,
-        fallbackCopiedToClipboard: true,
+        copiedToClipboard: false,
+        fallbackCopiedToClipboard: false,
         spokenByTts: false,
         ttsPlaybackError: errorMessage,
       };
     }
 
-    writeClipboardText(params.transformedText);
-    notify("Jarvis", "Response copied to clipboard.");
+    showTextResultOverlay({
+      text: params.transformedText,
+      transcript: params.transcript,
+      context: params.context,
+    });
+    notify("Jarvis", "Response ready in the overlay.");
     return {
       inserted: false,
-      copiedToClipboard: true,
-      fallbackCopiedToClipboard: true,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
       spokenByTts: false,
     };
   };
@@ -228,15 +292,19 @@ async function deliverTextOutput(params: {
 
     if (!ttsResult.success) {
       const errorMessage = ttsResult.error || "TTS playback failed.";
-      writeClipboardText(params.transformedText);
+      showTextResultOverlay({
+        text: params.transformedText,
+        transcript: params.transcript,
+        context: params.context,
+      });
       notify(
         "Jarvis",
-        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
+        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response is in the overlay.`,
       );
       return {
         inserted: false,
-        copiedToClipboard: true,
-        fallbackCopiedToClipboard: true,
+        copiedToClipboard: false,
+        fallbackCopiedToClipboard: false,
         spokenByTts: false,
         ttsPlaybackError: errorMessage,
       };
@@ -273,7 +341,7 @@ async function deliverTextOutput(params: {
  * 1. Capture what is currently in the clipboard.
  * 2. Route prompt + delivery mode (rewrite/explain/query/dictation).
  * 3. Send context to Gemini based on the selected mode.
- * 4. Insert at cursor or copy to clipboard based on delivery mode.
+ * 4. Insert at cursor, speak response, or surface output in the response overlay.
  */
 export async function runTextTask(
   request: TextTaskRequest,
@@ -298,6 +366,8 @@ export async function runTextTask(
       deliveryMode: "insert",
       ttsEnabled,
       ttsProvider,
+      transcript: request.instruction,
+      context,
     });
 
     return {
@@ -378,6 +448,8 @@ export async function runTextTask(
       deliveryMode: weatherDeliveryMode,
       ttsEnabled,
       ttsProvider,
+      transcript: request.instruction,
+      context,
     });
 
     return {
@@ -406,6 +478,8 @@ export async function runTextTask(
       deliveryMode: webpageDeliveryMode,
       ttsEnabled,
       ttsProvider,
+      transcript: request.instruction,
+      context,
     });
 
     return {
@@ -428,13 +502,17 @@ export async function runTextTask(
         imagePath: context.clipboard.imagePath,
         instruction: routedInstruction,
       });
-      writeClipboardImage(createImageFromBuffer(outputBuffer));
-      notify("Jarvis", "Image ready to paste.");
+      showImageResultOverlay({
+        imageBuffer: outputBuffer,
+        transcript: request.instruction,
+        context,
+      });
+      notify("Jarvis", "Image ready in the overlay.");
 
       return {
         context,
         sourceText: "",
-        transformedText: "Image edited and copied to clipboard.",
+        transformedText: "Image edited and ready in the overlay.",
         promptMode: "direct_query",
         deliveryMode: "none",
         inserted: false,
@@ -449,13 +527,22 @@ export async function runTextTask(
     const outputBuffer = await transformClipboardImage({
       instruction: routedInstruction,
     });
-    writeClipboardImage(createImageFromBuffer(outputBuffer));
-    notify("Jarvis", "Generated image ready to paste.");
+    showImageResultOverlay({
+      imageBuffer: outputBuffer,
+      transcript: request.instruction,
+      context,
+      contextValue: buildEffectiveImageGenerateContextValue({
+        instruction: routedInstruction,
+        activeAppName: context.activeApp.name,
+        activeWindowTitle: context.activeApp.windowTitle,
+      }),
+    });
+    notify("Jarvis", "Generated image ready in the overlay.");
 
     return {
       context,
       sourceText: "",
-      transformedText: "Image generated and copied to clipboard.",
+      transformedText: "Image generated and ready in the overlay.",
       promptMode: "direct_query",
       deliveryMode: "none",
       inserted: false,
@@ -481,6 +568,8 @@ export async function runTextTask(
         deliveryMode: imageExplainDeliveryMode,
         ttsEnabled,
         ttsProvider,
+        transcript: request.instruction,
+        context,
       });
 
       return {
@@ -522,13 +611,17 @@ export async function runTextTask(
       }
 
       if (result.imageBuffer) {
-        writeClipboardImage(createImageFromBuffer(result.imageBuffer));
-        notify("Jarvis", "Background removed. Image ready to paste.");
+        showImageResultOverlay({
+          imageBuffer: result.imageBuffer,
+          transcript: request.instruction,
+          context,
+        });
+        notify("Jarvis", "Background removed. Image ready in the overlay.");
 
         return {
           context,
           sourceText: "",
-          transformedText: "Background removed and copied to clipboard.",
+          transformedText: "Background removed and ready in the overlay.",
           promptMode: "direct_query",
           deliveryMode: "none",
           inserted: false,
@@ -586,6 +679,8 @@ export async function runTextTask(
     deliveryMode: plan.deliveryMode,
     ttsEnabled,
     ttsProvider,
+    transcript: request.instruction,
+    context,
   });
 
   return {
@@ -606,7 +701,7 @@ export async function runTextTask(
  * Orchestrates the image transformation flow:
  * 1. Capture clipboard image if present.
  * 2. Send instruction to Gemini for generation/editing.
- * 3. Put the result back in the clipboard and notify the user.
+ * 3. Show the result in the response overlay and notify the user.
  */
 export async function runImageTask(
   request: ImageTaskRequest,
@@ -620,8 +715,11 @@ export async function runImageTask(
     imagePath,
   });
 
-  const image = createImageFromBuffer(outputBuffer);
-  writeClipboardImage(image);
+  showImageResultOverlay({
+    imageBuffer: outputBuffer,
+    transcript: request.instruction,
+    context,
+  });
 
   await ensureOutputDir();
   const outputImagePath = join(
@@ -630,7 +728,7 @@ export async function runImageTask(
   );
   await writeFile(outputImagePath, outputBuffer);
 
-  notify("Jarvis", "Image ready to paste.");
+  notify("Jarvis", "Image ready in the overlay.");
 
   return {
     context,

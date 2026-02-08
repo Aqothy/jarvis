@@ -6,6 +6,7 @@ import type {
   InsertTextAtCursorResult,
   ImageTaskRequest,
   ImageTaskResult,
+  OverlayPayload,
   PermissionStatus,
   SpeechPreferences,
   SpeechProvider,
@@ -49,6 +50,12 @@ const api: AppBridge = {
   runImageTask: (request: ImageTaskRequest): Promise<ImageTaskResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.runImageTask, request),
 
+  copyOverlayContent: (payload: OverlayPayload): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.overlayCopyContent, payload),
+
+  dismissOverlay: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.overlayDismiss),
+
   getSpeechPreferences: (): Promise<SpeechPreferences> =>
     ipcRenderer.invoke(IPC_CHANNELS.speechGetPreferences),
 
@@ -63,6 +70,13 @@ const api: AppBridge = {
 
   setMemoryText: (text: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.memorySetText, text),
+
+  onOverlayResponse: (listener: (payload: OverlayPayload) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: OverlayPayload) =>
+      listener(payload);
+    ipcRenderer.on(IPC_CHANNELS.overlayResponse, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.overlayResponse, handler);
+  },
 
   onPushToTalkShortcut: (listener: () => void): (() => void) => {
     // Strip the IPC event argument so the renderer only sees a clean callback.

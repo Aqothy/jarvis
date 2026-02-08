@@ -126,6 +126,10 @@ export class MacOSService {
   static createImageFromBuffer(buffer: Buffer): Electron.NativeImage {
     return nativeImage.createFromBuffer(buffer);
   }
+
+  static createImageFromDataUrl(dataUrl: string): Electron.NativeImage {
+    return nativeImage.createFromDataURL(dataUrl);
+  }
 }
 
 // Export legacy functions for backward compatibility
@@ -167,4 +171,8 @@ export function writeClipboardImage(image: Electron.NativeImage): void {
 
 export function createImageFromBuffer(buffer: Buffer): Electron.NativeImage {
   return MacOSService.createImageFromBuffer(buffer);
+}
+
+export function createImageFromDataUrl(dataUrl: string): Electron.NativeImage {
+  return MacOSService.createImageFromDataUrl(dataUrl);
 }
