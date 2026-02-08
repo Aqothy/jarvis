@@ -25,13 +25,6 @@ function ensureMemoryStoreDir(): void {
   mkdirSync(dirname(getMemoryTextPath()), { recursive: true });
 }
 
-function parseMemoryLines(raw: string): string[] {
-  return raw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
 function migrateLegacyMemoryJsonIfNeeded(): void {
   const memoryTextPath = getMemoryTextPath();
   if (existsSync(memoryTextPath)) {

@@ -14,6 +14,7 @@ import {
   Shield,
   Keyboard,
   Brain,
+  Volume2,
   ArrowRight,
   Circle,
   XCircle,
@@ -84,6 +85,7 @@ function SettingsWindow(): React.ReactElement {
 
   const [permissions, setPermissions] =
     useState<PermissionStatus>(INITIAL_PERMISSIONS);
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(false);
   const [memoryText, setMemoryText] = useState<string>("");
   const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +122,22 @@ function SettingsWindow(): React.ReactElement {
       setError(err instanceof Error ? err.message : "Failed to load memories.");
     }
   }, [bridge]);
+
+  const handleTtsToggle = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+      const nextValue = event.target.checked;
+      setTtsEnabled(nextValue);
+      try {
+        await bridge.setTtsEnabled(nextValue);
+      } catch (err) {
+        setTtsEnabled(!nextValue);
+        setError(
+          err instanceof Error ? err.message : "Failed to save settings.",
+        );
+      }
+    },
+    [bridge],
+  );
 
   const handleSaveMemoryText = useCallback(async (): Promise<void> => {
     setMemoryBusy(true);
@@ -232,6 +250,34 @@ function SettingsWindow(): React.ReactElement {
                   <span className="key-separator">+</span>
                   <kbd>Space</kbd>
                 </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card card-wide">
+            <div className="card-header">
+              <div className="card-icon">
+                <Volume2 size={16} />
+              </div>
+              <h2>Voice Output</h2>
+            </div>
+
+            <div className="card-content">
+              <div className="toggle-row">
+                <div className="toggle-copy">
+                  <span className="toggle-title">Speak responses</span>
+                  <span className="toggle-desc">
+                    Replaces clipboard copy outputs with Gradium TTS playback.
+                  </span>
+                </div>
+                <label className="switch">
+                  <input
+                    type="checkbox"
+                    checked={ttsEnabled}
+                    onChange={handleTtsToggle}
+                  />
+                  <span className="switch-slider" />
+                </label>
               </div>
             </div>
           </section>

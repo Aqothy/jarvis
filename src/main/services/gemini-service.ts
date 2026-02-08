@@ -86,12 +86,18 @@ interface WeatherFunctionArgs {
   use_celsius?: boolean;
 }
 
+interface WebsiteReadFunctionArgs {
+  url?: string;
+  summary_style?: "brief" | "detailed";
+}
+
 export type TaskRouterRoute =
   | "text_task"
   | "image_edit"
   | "image_generate"
   | "image_explain"
   | "weather_query"
+  | "webpage_read"
   | "tts_read_aloud"
   | "background_remove";
 
@@ -125,7 +131,11 @@ function normalizeDeliveryModeForRoute(
   route: TaskRouterRoute,
   requestedMode: TextDeliveryMode,
 ): TextDeliveryMode {
-  // TTS delivery mode is always valid
+  if (route === "webpage_read") {
+    return "clipboard";
+  }
+
+  // TTS delivery mode is always valid.
   if (requestedMode === "tts") {
     return "tts";
   }
@@ -152,9 +162,36 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "image_generate" ||
     value === "image_explain" ||
     value === "weather_query" ||
+    value === "webpage_read" ||
     value === "tts_read_aloud" ||
     value === "background_remove"
   );
+}
+
+function extractFirstHttpUrl(input: string): string | undefined {
+  const match = input.match(/https?:\/\/[^\s<>"']+/i);
+  if (!match || !match[0]) {
+    return undefined;
+  }
+
+  const candidate = match[0].trim();
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.toString();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function buildActiveAppPromptLines(activeApp: ActiveAppContext): string[] {
+  return [
+    `Active app: ${activeApp.name}`,
+    `Window title: ${activeApp.windowTitle}`,
+  ];
 }
 
 function isTextPromptMode(value: string): value is TextPromptMode {
@@ -226,13 +263,12 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, tts_read_aloud, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read EXISTING clipboard/article/document aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud route and deliveryMode none. 8) If user asks for NEW information AND wants it read aloud (e.g., 'what's the weather? read it out loud', 'tell me about Apple stock and speak it'), choose the appropriate route (text_task/weather_query/etc) but set deliveryMode to tts. 9) If instruction ends with phrases like 'read it out loud', 'speak it', 'say it aloud', 'read this out loud', set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove the background', 'delete background', 'transparent background'), choose background_remove and deliveryMode none. 11) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, tts_read_aloud, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to read existing copied text aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud and deliveryMode none. 9) If user asks for new information and explicitly asks to read/speak it aloud, keep the route (text_task/weather_query/etc.) and set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 11) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
     `Clipboard text preview: ${params.clipboardTextPreview}`,
-    `Active app: ${params.activeApp.name}`,
-    `Window title: ${params.activeApp.windowTitle}`,
+    ...buildActiveAppPromptLines(params.activeApp),
   ].join("\n");
 
   const response = await client.models.generateContent({
@@ -318,8 +354,7 @@ export async function transformText(params: {
 
   const contextualHeader = [
     `Instruction: ${params.instruction}`,
-    `Active app: ${params.activeApp.name}`,
-    `Window title: ${params.activeApp.windowTitle}`,
+    ...buildActiveAppPromptLines(params.activeApp),
   ];
 
   const userPromptByMode: Record<TextPromptMode, string> = {
@@ -425,8 +460,7 @@ export async function transformImageToText(params: {
       : "";
   const textPrompt = [
     `Instruction: ${params.instruction}`,
-    `Active app: ${params.activeApp.name}`,
-    `Window title: ${params.activeApp.windowTitle}`,
+    ...buildActiveAppPromptLines(params.activeApp),
     memoryPrompt,
   ].join("\n");
 
@@ -468,8 +502,7 @@ export async function runWeatherFunctionCall(params: {
     model,
     contents: [
       `Instruction: ${params.instruction}`,
-      `Active app: ${params.activeApp.name}`,
-      `Window title: ${params.activeApp.windowTitle}`,
+      ...buildActiveAppPromptLines(params.activeApp),
     ].join("\n"),
     config: {
       systemInstruction:
@@ -532,4 +565,119 @@ export async function runWeatherFunctionCall(params: {
     : await WeatherService.getWeatherForCurrentLocation(useCelsius);
 
   return WeatherService.formatWeather(weather, useCelsius);
+}
+
+export async function runWebsiteReadFunctionCall(params: {
+  instruction: string;
+  activeApp: ActiveAppContext;
+  clipboardText: string;
+}): Promise<string> {
+  const client = getGeminiClient();
+  const model = getGeminiFastModel();
+
+  const response = await client.models.generateContent({
+    model,
+    contents: [
+      `Instruction: ${params.instruction}`,
+      ...buildActiveAppPromptLines(params.activeApp),
+    ].join("\n"),
+    config: {
+      systemInstruction:
+        "You are Jarvis. For requests that involve reading or summarizing website content, call get_readable_website_content exactly once. If no URL is explicitly provided in the instruction, leave it empty so the app can use the clipboard URL.",
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: "get_readable_website_content",
+              description:
+                "Fetch and extract readable text from a webpage for read-aloud and summarization.",
+              parametersJsonSchema: {
+                type: "object",
+                properties: {
+                  url: {
+                    type: "string",
+                    description:
+                      "Optional webpage URL. Leave empty to use the clipboard URL.",
+                  },
+                  summary_style: {
+                    type: "string",
+                    enum: ["brief", "detailed"],
+                    description:
+                      "How detailed the summary should be. Use brief by default.",
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: FunctionCallingConfigMode.ANY,
+          allowedFunctionNames: ["get_readable_website_content"],
+        },
+      },
+      maxOutputTokens: 256,
+      candidateCount: 1,
+      temperature: 0,
+    },
+  });
+
+  const functionCall = response.functionCalls?.[0];
+  if (
+    !functionCall ||
+    functionCall.name !== "get_readable_website_content"
+  ) {
+    throw new Error("Website function call was not produced by the model.");
+  }
+
+  const functionArgs = (functionCall.args ?? {}) as WebsiteReadFunctionArgs;
+  const requestedUrl =
+    typeof functionArgs.url === "string" ? functionArgs.url.trim() : "";
+  const clipboardUrl = extractFirstHttpUrl(params.clipboardText);
+  const resolvedUrl =
+    requestedUrl.length > 0 ? requestedUrl : clipboardUrl ?? "";
+
+  if (resolvedUrl.trim().length === 0) {
+    throw new Error(
+      "No website URL was available. Copy a website URL to clipboard and try again.",
+    );
+  }
+
+  const summaryStyle = functionArgs.summary_style === "detailed"
+    ? "detailed"
+    : "brief";
+  const summarySystemPrompt =
+    summaryStyle === "detailed"
+      ? "Read and summarize the content of the provided website URL. Use Google Search tool when needed to fetch the page content and produce a clear, spoken-friendly summary with important details. Return plain text only."
+      : "Read and summarize the content of the provided website URL. Use Google Search tool when needed to fetch the page content and produce a concise, spoken-friendly summary. Return plain text only.";
+
+  const summaryResponse = await client.models.generateContent({
+    model,
+    contents: [
+      `Instruction: ${params.instruction}`,
+      `Website URL: ${resolvedUrl}`,
+      ...buildActiveAppPromptLines(params.activeApp),
+    ].join("\n"),
+    config: {
+      systemInstruction: summarySystemPrompt,
+      tools: getGeminiSearchTools(),
+      maxOutputTokens: 1200,
+      candidateCount: 1,
+      temperature: 0.2,
+    },
+  });
+
+  const summaryText =
+    typeof summaryResponse.text === "string" ? summaryResponse.text.trim() : "";
+  if (summaryText.length === 0) {
+    throw new Error("Website summary generation returned empty content.");
+  }
+
+  return [
+    `Website: ${resolvedUrl}`,
+    "",
+    summaryText,
+  ].join("\n");
 }

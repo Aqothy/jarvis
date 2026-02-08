@@ -47,6 +47,9 @@ const api: AppBridge = {
   runImageTask: (request: ImageTaskRequest): Promise<ImageTaskResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.runImageTask, request),
 
+  setTtsEnabled: (enabled: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.ttsSetEnabled, enabled),
+
   getMemoryText: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.memoryGetText),
 

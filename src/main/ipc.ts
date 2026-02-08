@@ -21,6 +21,7 @@ import {
   getMemoryText,
   setMemoryText,
 } from "./services/memory-service";
+import { setTtsEnabled } from "./services/tts-state-service";
 import {
   pushGradiumSttAudioChunk,
   startGradiumSttSession,
@@ -91,6 +92,13 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.captureContextPreview,
     async (): Promise<ContextSnapshot> => {
       return captureContextSnapshot({ persistClipboardImage: false });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ttsSetEnabled,
+    async (_event, enabled: boolean): Promise<void> => {
+      setTtsEnabled(enabled === true);
     },
   );
 
