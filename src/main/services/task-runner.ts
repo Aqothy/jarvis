@@ -1,4 +1,5 @@
-import { Notification, app } from "electron";
+import { Notification, app, nativeImage } from "electron";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -39,6 +40,44 @@ interface WeatherQuery {
   useCelsius: boolean;
 }
 
+let cachedNotificationIcon: Electron.NativeImage | null = null;
+
+function resolveNotificationIconPath(): string | null {
+  const candidates = [
+    join(process.cwd(), "public", "jarvis.png"),
+    join(app.getAppPath(), "public", "jarvis.png"),
+    join(__dirname, "../../../public", "jarvis.png"),
+    join(__dirname, "../../public", "jarvis.png"),
+  ];
+
+  for (const candidatePath of candidates) {
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
+function getNotificationIcon(): Electron.NativeImage | undefined {
+  if (cachedNotificationIcon) {
+    return cachedNotificationIcon.isEmpty() ? undefined : cachedNotificationIcon;
+  }
+
+  const iconPath = resolveNotificationIconPath();
+  if (!iconPath) {
+    cachedNotificationIcon = nativeImage.createEmpty();
+    return undefined;
+  }
+
+  const loadedImage = nativeImage.createFromPath(iconPath);
+  cachedNotificationIcon = loadedImage.isEmpty()
+    ? nativeImage.createEmpty()
+    : loadedImage.resize({ width: 128, height: 128 });
+
+  return cachedNotificationIcon.isEmpty() ? undefined : cachedNotificationIcon;
+}
+
 function getOutputDir(): string {
   return join(app.getPath("userData"), "outputs");
 }
@@ -49,7 +88,12 @@ async function ensureOutputDir(): Promise<void> {
 
 function notify(title: string, body: string): void {
   if (Notification.isSupported()) {
-    new Notification({ title, body }).show();
+    const options: Electron.NotificationConstructorOptions = { title, body };
+    const icon = getNotificationIcon();
+    if (icon) {
+      options.icon = icon;
+    }
+    new Notification(options).show();
   }
 }
 
