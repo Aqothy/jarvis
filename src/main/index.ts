@@ -26,6 +26,59 @@ let settingsWindow: BrowserWindow | null = null;
 let pillWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
+let cachedAppIcon: Electron.NativeImage | null = null;
+
+function resolveAssetPath(fileName: string): string | null {
+  const candidates = [
+    join(process.cwd(), "public", fileName),
+    join(app.getAppPath(), "public", fileName),
+    join(__dirname, "../../public", fileName),
+    join(__dirname, "../public", fileName),
+  ];
+
+  for (const candidatePath of candidates) {
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  return null;
+}
+
+function loadImageAsset(
+  fileName: string,
+  size?: { width: number; height: number },
+): Electron.NativeImage {
+  const assetPath = resolveAssetPath(fileName);
+  if (!assetPath) {
+    return nativeImage.createEmpty();
+  }
+
+  const image = nativeImage.createFromPath(assetPath);
+  if (image.isEmpty()) {
+    return nativeImage.createEmpty();
+  }
+
+  if (!size) {
+    return image;
+  }
+
+  return image.resize(size);
+}
+
+function getAppIconImage(): Electron.NativeImage {
+  if (cachedAppIcon) {
+    return cachedAppIcon;
+  }
+
+  cachedAppIcon = loadImageAsset("jarvis.png");
+  return cachedAppIcon;
+}
+
+function getWindowIcon(): Electron.NativeImage | undefined {
+  const image = getAppIconImage();
+  return image.isEmpty() ? undefined : image;
+}
 
 function resolvePreloadPath(): string {
   const cjsPath = join(__dirname, "../preload/index.cjs");
@@ -99,6 +152,7 @@ function createPillWindow(): void {
     show: false,
     width: 460,
     height: 118,
+    icon: getWindowIcon(),
     frame: false,
     transparent: true,
     resizable: false,
@@ -142,6 +196,7 @@ function createSettingsWindow(): void {
     show: false,
     width: 560,
     height: 640,
+    icon: getWindowIcon(),
     minWidth: 480,
     minHeight: 520,
     title: "Jarvis Settings",
@@ -197,15 +252,21 @@ function showSettingsWindow(): void {
 }
 
 function createTrayIcon(): Electron.NativeImage {
-  const svg =
+  const image = loadImageAsset("mic.png", { width: 18, height: 18 });
+  if (!image.isEmpty()) {
+    image.setTemplateImage(false);
+    return image;
+  }
+
+  const fallbackSvg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="8" fill="#22c55e"/><text x="9" y="12" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#ffffff">J</text></svg>';
-  const image = nativeImage
+  const fallbackImage = nativeImage
     .createFromDataURL(
-      `data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`,
+      `data:image/svg+xml;base64,${Buffer.from(fallbackSvg).toString("base64")}`,
     )
     .resize({ width: 18, height: 18 });
-  image.setTemplateImage(false);
-  return image;
+  fallbackImage.setTemplateImage(false);
+  return fallbackImage;
 }
 
 function createStatusTray(): void {
@@ -275,6 +336,11 @@ function registerPushToTalkShortcuts(): void {
 }
 
 app.whenReady().then(() => {
+  const appIcon = getAppIconImage();
+  if (process.platform === "darwin" && !appIcon.isEmpty()) {
+    app.dock.setIcon(appIcon);
+  }
+
   registerIpcHandlers();
   initializeGradiumSttConnection().catch((error) => {
     const message =

@@ -105,6 +105,25 @@ body[data-window-mode="pill"] #root {
   margin: 0 auto;
   width: 100%;
   -webkit-app-region: no-drag;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+
+.settings-page::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-page::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-page::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+}
+
+.settings-page::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.42);
 }
 
 /* Page Header */
@@ -233,6 +252,31 @@ body[data-window-mode="pill"] #root {
 .toggle-desc {
   font-size: 12px;
   color: var(--text-ghost);
+}
+
+.provider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.provider-group + .provider-group {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--card-border);
+}
+
+.provider-label {
+  font-size: 12px;
+  color: var(--text-ghost);
+  letter-spacing: 0.02em;
+}
+
+.provider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .switch {

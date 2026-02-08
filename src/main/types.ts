@@ -36,6 +36,12 @@ export type TextPromptMode =
   | "dictation_cleanup";
 
 export type TextDeliveryMode = "insert" | "clipboard" | "none" | "tts";
+export type SpeechProvider = "gradium" | "elevenlabs";
+
+export interface SpeechPreferences {
+  ttsProvider: SpeechProvider;
+  ttsEnabled: boolean;
+}
 
 export interface TextTaskResult {
   context: ContextSnapshot;
@@ -83,6 +89,8 @@ export interface AppBridge {
   insertTextAtCursor: (text: string) => Promise<InsertTextAtCursorResult>;
   runTextTask: (request: TextTaskRequest) => Promise<TextTaskResult>;
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
+  getSpeechPreferences: () => Promise<SpeechPreferences>;
+  setTtsProvider: (provider: SpeechProvider) => Promise<void>;
   setTtsEnabled: (enabled: boolean) => Promise<void>;
   getMemoryText: () => Promise<string>;
   setMemoryText: (text: string) => Promise<void>;

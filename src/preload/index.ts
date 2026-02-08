@@ -7,6 +7,8 @@ import type {
   ImageTaskRequest,
   ImageTaskResult,
   PermissionStatus,
+  SpeechPreferences,
+  SpeechProvider,
   TextTaskRequest,
   TextTaskResult,
   TranscriptionResult,
@@ -46,6 +48,12 @@ const api: AppBridge = {
 
   runImageTask: (request: ImageTaskRequest): Promise<ImageTaskResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.runImageTask, request),
+
+  getSpeechPreferences: (): Promise<SpeechPreferences> =>
+    ipcRenderer.invoke(IPC_CHANNELS.speechGetPreferences),
+
+  setTtsProvider: (provider: SpeechProvider): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.ttsSetProvider, provider),
 
   setTtsEnabled: (enabled: boolean): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.ttsSetEnabled, enabled),

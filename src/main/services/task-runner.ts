@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ImageTaskRequest,
   ImageTaskResult,
+  SpeechProvider,
   TextDeliveryMode,
   TextPromptMode,
   TextTaskRequest,
@@ -29,8 +30,9 @@ import {
 } from "./gemini-service";
 import { synthesizeAndPlay } from "./gradium-stt-service";
 import { WeatherService } from "./weather-service";
+import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
 import { removeBackground } from "./background-removal-service";
-import { getTtsEnabled } from "./tts-state-service";
+import { getTtsEnabled, getTtsProvider } from "./tts-state-service";
 
 interface WeatherQuery {
   location?: string;
@@ -89,6 +91,7 @@ async function deliverTextOutput(params: {
   transformedText: string;
   deliveryMode: TextDeliveryMode;
   ttsEnabled: boolean;
+  ttsProvider: SpeechProvider;
 }): Promise<{
   inserted: boolean;
   copiedToClipboard: boolean;
@@ -96,6 +99,32 @@ async function deliverTextOutput(params: {
   spokenByTts: boolean;
   ttsPlaybackError?: string;
 }> {
+  const speakWithProvider = async (): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
+    try {
+      if (params.ttsProvider === "elevenlabs") {
+        const ttsResult = await ElevenLabsTtsService.readAloud({
+          text: params.transformedText,
+        });
+        return {
+          success: ttsResult.success,
+          error: ttsResult.error,
+        };
+      }
+
+      await synthesizeAndPlay(params.transformedText);
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "TTS playback failed.",
+      };
+    }
+  };
+
   const deliverAsClipboardOrTts = async (): Promise<{
     inserted: boolean;
     copiedToClipboard: boolean;
@@ -104,8 +133,8 @@ async function deliverTextOutput(params: {
     ttsPlaybackError?: string;
   }> => {
     if (params.ttsEnabled) {
-      try {
-        await synthesizeAndPlay(params.transformedText);
+      const ttsResult = await speakWithProvider();
+      if (ttsResult.success) {
         notify("Jarvis", "Response spoken.");
         return {
           inserted: false,
@@ -113,22 +142,21 @@ async function deliverTextOutput(params: {
           fallbackCopiedToClipboard: false,
           spokenByTts: true,
         };
-      } catch (error) {
-        const errorMessage =
-          error instanceof Error ? error.message : "Gradium TTS playback failed.";
-        writeClipboardText(params.transformedText);
-        notify(
-          "Jarvis",
-          `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
-        );
-        return {
-          inserted: false,
-          copiedToClipboard: true,
-          fallbackCopiedToClipboard: true,
-          spokenByTts: false,
-          ttsPlaybackError: errorMessage,
-        };
       }
+
+      const errorMessage = ttsResult.error || "TTS playback failed.";
+      writeClipboardText(params.transformedText);
+      notify(
+        "Jarvis",
+        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
+      );
+      return {
+        inserted: false,
+        copiedToClipboard: true,
+        fallbackCopiedToClipboard: true,
+        spokenByTts: false,
+        ttsPlaybackError: errorMessage,
+      };
     }
 
     writeClipboardText(params.transformedText);
@@ -147,6 +175,34 @@ async function deliverTextOutput(params: {
       copiedToClipboard: false,
       fallbackCopiedToClipboard: false,
       spokenByTts: false,
+    };
+  }
+
+  if (params.deliveryMode === "tts") {
+    notify("Jarvis", "Reading response aloud...");
+    const ttsResult = await speakWithProvider();
+
+    if (!ttsResult.success) {
+      const errorMessage = ttsResult.error || "TTS playback failed.";
+      writeClipboardText(params.transformedText);
+      notify(
+        "Jarvis",
+        `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
+      );
+      return {
+        inserted: false,
+        copiedToClipboard: true,
+        fallbackCopiedToClipboard: true,
+        spokenByTts: false,
+        ttsPlaybackError: errorMessage,
+      };
+    }
+
+    return {
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+      spokenByTts: true,
     };
   }
 
@@ -179,6 +235,7 @@ export async function runTextTask(
   request: TextTaskRequest,
 ): Promise<TextTaskResult> {
   const ttsEnabled = getTtsEnabled();
+  const ttsProvider = getTtsProvider();
 
   if (request.mode === "force_dictation") {
     const context = await captureContextSnapshot({
@@ -196,6 +253,7 @@ export async function runTextTask(
       transformedText,
       deliveryMode: "insert",
       ttsEnabled,
+      ttsProvider,
     });
 
     return {
@@ -275,6 +333,7 @@ export async function runTextTask(
       transformedText,
       deliveryMode: weatherDeliveryMode,
       ttsEnabled,
+      ttsProvider,
     });
 
     return {
@@ -302,6 +361,7 @@ export async function runTextTask(
       transformedText,
       deliveryMode: webpageDeliveryMode,
       ttsEnabled,
+      ttsProvider,
     });
 
     return {
@@ -376,6 +436,7 @@ export async function runTextTask(
         transformedText,
         deliveryMode: imageExplainDeliveryMode,
         ttsEnabled,
+        ttsProvider,
       });
 
       return {
@@ -480,6 +541,7 @@ export async function runTextTask(
     transformedText,
     deliveryMode: plan.deliveryMode,
     ttsEnabled,
+    ttsProvider,
   });
 
   return {

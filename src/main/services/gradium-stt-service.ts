@@ -1,5 +1,5 @@
 import { app, globalShortcut } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, type ExecException } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -754,6 +754,11 @@ function playAudioFile(path: string): Promise<void> {
       unregisterTtsStopShortcuts();
 
       if (error) {
+        const execError = error as ExecException;
+        if (execError.signal === "SIGTERM") {
+          resolve();
+          return;
+        }
         reject(
           new Error(
             error instanceof Error ? error.message : "afplay process failed.",

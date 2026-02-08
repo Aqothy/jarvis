@@ -6,6 +6,8 @@ import type {
   ImageTaskRequest,
   ImageTaskResult,
   PermissionStatus,
+  SpeechPreferences,
+  SpeechProvider,
   TextTaskRequest,
   TextTaskResult,
 } from "./types";
@@ -21,7 +23,11 @@ import {
   getMemoryText,
   setMemoryText,
 } from "./services/memory-service";
-import { setTtsEnabled } from "./services/tts-state-service";
+import {
+  getSpeechPreferences,
+  setTtsEnabled,
+  setTtsProvider,
+} from "./services/tts-state-service";
 import {
   pushGradiumSttAudioChunk,
   startGradiumSttSession,
@@ -92,6 +98,22 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.captureContextPreview,
     async (): Promise<ContextSnapshot> => {
       return captureContextSnapshot({ persistClipboardImage: false });
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.speechGetPreferences,
+    async (): Promise<SpeechPreferences> => {
+      return getSpeechPreferences();
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.ttsSetProvider,
+    async (_event, provider: SpeechProvider): Promise<void> => {
+      if (provider === "gradium" || provider === "elevenlabs") {
+        setTtsProvider(provider);
+      }
     },
   );
 

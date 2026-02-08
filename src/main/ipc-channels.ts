@@ -6,6 +6,8 @@ export const IPC_CHANNELS = {
   sttAudioChunk: "assistant:stt-audio-chunk",
   sttStop: "assistant:stt-stop",
   captureContextPreview: "assistant:capture-context-preview",
+  speechGetPreferences: "assistant:speech-get-preferences",
+  ttsSetProvider: "assistant:tts-set-provider",
   ttsSetEnabled: "assistant:tts-set-enabled",
   memoryGetText: "assistant:memory-get-text",
   memorySetText: "assistant:memory-set-text",
