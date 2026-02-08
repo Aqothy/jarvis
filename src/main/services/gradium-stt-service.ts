@@ -1,3 +1,8 @@
+import { app, globalShortcut } from "electron";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import WebSocket, { RawData } from "ws";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +69,9 @@ const connectionState: ConnectionState = {
 function getGradiumApiKey(): string {
   const key = process.env.GRADIUM_API_KEY;
   if (!key) {
-    throw new Error("GRADIUM_API_KEY is not set. Add it to your environment before using STT.");
+    throw new Error(
+      "GRADIUM_API_KEY is not set. Add it to your environment before using STT.",
+    );
   }
   return key;
 }
@@ -173,7 +180,9 @@ function createStream(): SttStream {
 
 function enqueuePreStreamAudioChunk(base64Audio: string): void {
   connectionState.preStreamAudioChunks.push(base64Audio);
-  if (connectionState.preStreamAudioChunks.length > MAX_PRE_STREAM_AUDIO_CHUNKS) {
+  if (
+    connectionState.preStreamAudioChunks.length > MAX_PRE_STREAM_AUDIO_CHUNKS
+  ) {
     connectionState.preStreamAudioChunks.shift();
   }
 }
@@ -351,11 +360,7 @@ async function ensureConnectionReady(): Promise<void> {
 
   const socket = connectionState.socket;
 
-  if (
-    socket &&
-    connectionState.ready &&
-    socket.readyState === WebSocket.OPEN
-  ) {
+  if (socket && connectionState.ready && socket.readyState === WebSocket.OPEN) {
     return;
   }
 
@@ -409,7 +414,8 @@ function handleMessage(raw: RawData): void {
         typeof parsed.message === "string"
           ? parsed.message
           : "Unknown Gradium STT error";
-      const suffix = typeof parsed.code === "number" ? ` (code ${parsed.code})` : "";
+      const suffix =
+        typeof parsed.code === "number" ? ` (code ${parsed.code})` : "";
       handleSocketFailure(new Error(`Gradium STT failed${suffix}: ${msg}`));
       break;
     }
@@ -501,7 +507,11 @@ export function pushGradiumSttAudioChunk(audioBuffer: ArrayBuffer): void {
   }
 
   const socket = connectionState.socket;
-  if (!socket || !connectionState.ready || socket.readyState !== WebSocket.OPEN) {
+  if (
+    !socket ||
+    !connectionState.ready ||
+    socket.readyState !== WebSocket.OPEN
+  ) {
     stream.pendingAudioChunks.push(base64);
     return;
   }
@@ -554,7 +564,10 @@ export function shutdownGradiumSttConnection(): void {
 
   const stream = connectionState.activeStream;
   if (stream) {
-    failStream(stream, new Error("Gradium STT stream closed during app shutdown."));
+    failStream(
+      stream,
+      new Error("Gradium STT stream closed during app shutdown."),
+    );
     connectionState.activeStream = null;
   }
 
@@ -573,4 +586,231 @@ export function shutdownGradiumSttConnection(): void {
   connectionState.resolveReady = null;
   connectionState.rejectReady = null;
   connectionState.readySettled = false;
+}
+
+// ---------------------------------------------------------------------------
+// TTS API
+// ---------------------------------------------------------------------------
+
+interface GradiumTtsRequestBody {
+  text: string;
+  voice_id: string;
+  output_format: "wav" | "pcm" | "opus";
+  model_name: string;
+  only_audio: boolean;
+}
+
+let activeTtsPlayback: ReturnType<typeof execFile> | null = null;
+let activeTtsAudioPath: string | null = null;
+const ttsStopShortcuts = new Set<string>();
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getGradiumTtsRegion(): "us" | "eu" {
+  const region = (process.env.GRADIUM_TTS_REGION || "us").toLowerCase();
+  return region === "eu" ? "eu" : "us";
+}
+
+function getGradiumTtsEndpoint(): string {
+  return getGradiumTtsRegion() === "eu"
+    ? "https://eu.api.gradium.ai/api/post/speech/tts"
+    : "https://us.api.gradium.ai/api/post/speech/tts";
+}
+
+function getGradiumTtsModel(): string {
+  return process.env.GRADIUM_TTS_MODEL || "default";
+}
+
+function getGradiumTtsVoice(): string {
+  const voice = process.env.GRADIUM_TTS_VOICE_ID;
+  if (!voice || voice.trim().length === 0) {
+    throw new Error(
+      "GRADIUM_TTS_VOICE_ID is not set. Configure a Gradium voice before enabling TTS output.",
+    );
+  }
+  return voice.trim();
+}
+
+function getGradiumTtsOutputFormat(): "wav" | "pcm" | "opus" {
+  const format = (process.env.GRADIUM_TTS_OUTPUT_FORMAT || "wav").toLowerCase();
+  if (format === "pcm" || format === "opus") {
+    return format;
+  }
+  return "wav";
+}
+
+function getAudioFileExtension(format: "wav" | "pcm" | "opus"): string {
+  if (format === "opus") {
+    return "ogg";
+  }
+  if (format === "pcm") {
+    return "pcm";
+  }
+  return "wav";
+}
+
+function extractAudioFromJsonPayload(payload: unknown): Buffer | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const obj = payload as Record<string, unknown>;
+  const candidates = [obj.audio, obj.audio_base64, obj.base64_audio, obj.data];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      try {
+        return Buffer.from(candidate, "base64");
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function registerTtsStopShortcut(accelerator: string): void {
+  if (ttsStopShortcuts.has(accelerator)) {
+    return;
+  }
+  if (!app.isReady()) {
+    return;
+  }
+  const registered = globalShortcut.register(accelerator, () => {
+    void stopActiveTtsPlayback();
+  });
+  if (registered) {
+    ttsStopShortcuts.add(accelerator);
+  }
+}
+
+function registerTtsStopShortcuts(): void {
+  registerTtsStopShortcut("Ctrl+C");
+}
+
+function unregisterTtsStopShortcuts(): void {
+  for (const accelerator of ttsStopShortcuts) {
+    globalShortcut.unregister(accelerator);
+  }
+  ttsStopShortcuts.clear();
+}
+
+async function requestGradiumTtsAudio(text: string): Promise<Buffer> {
+  const outputFormat = getGradiumTtsOutputFormat();
+  const body: GradiumTtsRequestBody = {
+    text,
+    voice_id: getGradiumTtsVoice(),
+    output_format: outputFormat,
+    model_name: getGradiumTtsModel(),
+    only_audio: true,
+  };
+  const endpoint = getGradiumTtsEndpoint();
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "x-api-key": getGradiumApiKey(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    const suffix = errorBody.trim().length > 0 ? ` - ${errorBody.trim()}` : "";
+    throw new Error(
+      `Gradium TTS request failed: ${response.status} ${response.statusText}${suffix}`,
+    );
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.toLowerCase().includes("application/json")) {
+    const payload = (await response.json()) as unknown;
+    const audioFromJson = extractAudioFromJsonPayload(payload);
+    if (!audioFromJson || audioFromJson.length === 0) {
+      throw new Error("Gradium TTS returned JSON without audio payload.");
+    }
+    return audioFromJson;
+  }
+
+  const audioBuffer = Buffer.from(await response.arrayBuffer());
+  if (audioBuffer.length === 0) {
+    throw new Error("Gradium TTS returned an empty audio payload.");
+  }
+  return audioBuffer;
+}
+
+function playAudioFile(path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    registerTtsStopShortcuts();
+    const playback = execFile("afplay", [path], (error) => {
+      if (activeTtsPlayback === playback) {
+        activeTtsPlayback = null;
+      }
+      unregisterTtsStopShortcuts();
+
+      if (error) {
+        reject(
+          new Error(
+            error instanceof Error ? error.message : "afplay process failed.",
+          ),
+        );
+        return;
+      }
+      resolve();
+    });
+    activeTtsPlayback = playback;
+  });
+}
+
+async function cleanupTtsFile(path: string): Promise<void> {
+  await unlink(path).catch(() => undefined);
+  if (activeTtsAudioPath === path) {
+    activeTtsAudioPath = null;
+  }
+}
+
+async function stopActiveTtsPlayback(): Promise<void> {
+  const currentPlayback = activeTtsPlayback;
+  activeTtsPlayback = null;
+
+  if (currentPlayback && currentPlayback.exitCode === null) {
+    currentPlayback.kill("SIGTERM");
+    await delay(500);
+  }
+  unregisterTtsStopShortcuts();
+
+  const currentPath = activeTtsAudioPath;
+  activeTtsAudioPath = null;
+  if (currentPath) {
+    await unlink(currentPath).catch(() => undefined);
+  }
+}
+
+export async function synthesizeAndPlay(text: string): Promise<void> {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return;
+  }
+
+  await stopActiveTtsPlayback();
+  const audioBuffer = await requestGradiumTtsAudio(normalized);
+  const outputFormat = getGradiumTtsOutputFormat();
+  const extension = getAudioFileExtension(outputFormat);
+  const tempPath = join(
+    app.getPath("temp"),
+    `jarvis-tts-${Date.now()}-${randomUUID()}.${extension}`,
+  );
+  activeTtsAudioPath = tempPath;
+  await writeFile(tempPath, audioBuffer);
+
+  try {
+    await playAudioFile(tempPath);
+  } finally {
+    await cleanupTtsFile(tempPath);
+  }
 }

@@ -22,11 +22,16 @@ import { transformClipboardImage } from "./gemini-image-service";
 import {
   routeTextTask,
   runWeatherFunctionCall,
+  runWebsiteReadFunctionCall,
   type TaskRouterRoute,
   transformImageToText,
   transformText,
 } from "./gemini-service";
+import { synthesizeAndPlay } from "./gradium-stt-service";
 import { WeatherService } from "./weather-service";
+import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
+import { removeBackground } from "./background-removal-service";
+import { getTtsEnabled } from "./tts-state-service";
 
 interface WeatherQuery {
   location?: string;
@@ -45,6 +50,13 @@ function notify(title: string, body: string): void {
   if (Notification.isSupported()) {
     new Notification({ title, body }).show();
   }
+}
+
+function truncateForNotification(value: string, limit: number): string {
+  if (value.length <= limit) {
+    return value;
+  }
+  return `${value.slice(0, limit)}...`;
 }
 
 function parseWeatherQuery(instruction: string): WeatherQuery {
@@ -77,12 +89,88 @@ function requiresClipboardTextForMode(mode: TextPromptMode): boolean {
 async function deliverTextOutput(params: {
   transformedText: string;
   deliveryMode: TextDeliveryMode;
+  ttsEnabled: boolean;
 }): Promise<{
   inserted: boolean;
   copiedToClipboard: boolean;
   fallbackCopiedToClipboard: boolean;
+  spokenByTts: boolean;
+  ttsPlaybackError?: string;
 }> {
+  const deliverAsClipboardOrTts = async (): Promise<{
+    inserted: boolean;
+    copiedToClipboard: boolean;
+    fallbackCopiedToClipboard: boolean;
+    spokenByTts: boolean;
+    ttsPlaybackError?: string;
+  }> => {
+    if (params.ttsEnabled) {
+      try {
+        await synthesizeAndPlay(params.transformedText);
+        notify("Jarvis", "Response spoken.");
+        return {
+          inserted: false,
+          copiedToClipboard: false,
+          fallbackCopiedToClipboard: false,
+          spokenByTts: true,
+        };
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Gradium TTS playback failed.";
+        writeClipboardText(params.transformedText);
+        notify(
+          "Jarvis",
+          `TTS failed: ${truncateForNotification(errorMessage, 120)}. Response copied to clipboard.`,
+        );
+        return {
+          inserted: false,
+          copiedToClipboard: true,
+          fallbackCopiedToClipboard: true,
+          spokenByTts: false,
+          ttsPlaybackError: errorMessage,
+        };
+      }
+    }
+
+    writeClipboardText(params.transformedText);
+    notify("Jarvis", "Response copied to clipboard.");
+    return {
+      inserted: false,
+      copiedToClipboard: true,
+      fallbackCopiedToClipboard: true,
+      spokenByTts: false,
+    };
+  };
+
   if (params.deliveryMode === "none") {
+    return {
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+      spokenByTts: false,
+    };
+  }
+
+  if (params.deliveryMode === "tts") {
+    notify("Jarvis", "Reading response aloud...");
+    const ttsResult = await ElevenLabsTtsService.readAloud({
+      text: params.transformedText,
+    });
+
+    if (!ttsResult.success) {
+      // Fallback to clipboard if TTS fails
+      writeClipboardText(params.transformedText);
+      notify(
+        "Jarvis",
+        `TTS failed: ${ttsResult.error}. Response copied to clipboard.`,
+      );
+      return {
+        inserted: false,
+        copiedToClipboard: true,
+        fallbackCopiedToClipboard: true,
+      };
+    }
+
     return {
       inserted: false,
       copiedToClipboard: false,
@@ -93,29 +181,19 @@ async function deliverTextOutput(params: {
   if (params.deliveryMode === "insert") {
     const inserted = await insertTextAtCursor(params.transformedText);
     if (!inserted) {
-      writeClipboardText(params.transformedText);
-      notify("Jarvis", "Insert failed. Response copied to clipboard.");
-      return {
-        inserted: false,
-        copiedToClipboard: true,
-        fallbackCopiedToClipboard: true,
-      };
+      const fallbackResult = await deliverAsClipboardOrTts();
+      return fallbackResult;
     }
 
     return {
       inserted: true,
       copiedToClipboard: false,
       fallbackCopiedToClipboard: false,
+      spokenByTts: false,
     };
   }
 
-  writeClipboardText(params.transformedText);
-  notify("Jarvis", "Response copied to clipboard.");
-  return {
-    inserted: false,
-    copiedToClipboard: true,
-    fallbackCopiedToClipboard: true,
-  };
+  return deliverAsClipboardOrTts();
 }
 
 /**
@@ -128,6 +206,8 @@ async function deliverTextOutput(params: {
 export async function runTextTask(
   request: TextTaskRequest,
 ): Promise<TextTaskResult> {
+  const ttsEnabled = getTtsEnabled();
+
   if (request.mode === "force_dictation") {
     const context = await captureContextSnapshot({
       persistClipboardImage: false,
@@ -143,6 +223,7 @@ export async function runTextTask(
     const deliveryResult = await deliverTextOutput({
       transformedText,
       deliveryMode: "insert",
+      ttsEnabled,
     });
 
     return {
@@ -154,6 +235,8 @@ export async function runTextTask(
       inserted: deliveryResult.inserted,
       copiedToClipboard: deliveryResult.copiedToClipboard,
       fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      spokenByTts: deliveryResult.spokenByTts,
+      ttsPlaybackError: deliveryResult.ttsPlaybackError,
     };
   }
 
@@ -219,6 +302,7 @@ export async function runTextTask(
     const deliveryResult = await deliverTextOutput({
       transformedText,
       deliveryMode: weatherDeliveryMode,
+      ttsEnabled,
     });
 
     return {
@@ -230,6 +314,74 @@ export async function runTextTask(
       inserted: deliveryResult.inserted,
       copiedToClipboard: deliveryResult.copiedToClipboard,
       fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      spokenByTts: deliveryResult.spokenByTts,
+      ttsPlaybackError: deliveryResult.ttsPlaybackError,
+    };
+  }
+
+  if (routerRoute === "webpage_read") {
+    const transformedText = await runWebsiteReadFunctionCall({
+      instruction: routedInstruction,
+      activeApp: context.activeApp,
+      clipboardText: context.clipboard.text?.text ?? "",
+    });
+    const webpageDeliveryMode: TextDeliveryMode = "clipboard";
+    const deliveryResult = await deliverTextOutput({
+      transformedText,
+      deliveryMode: webpageDeliveryMode,
+      ttsEnabled,
+    });
+
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "direct_query",
+      deliveryMode: webpageDeliveryMode,
+      inserted: deliveryResult.inserted,
+      copiedToClipboard: deliveryResult.copiedToClipboard,
+      fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      spokenByTts: deliveryResult.spokenByTts,
+      ttsPlaybackError: deliveryResult.ttsPlaybackError,
+    };
+  }
+
+  if (routerRoute === "tts_read_aloud") {
+    const textToRead = context.clipboard.text?.text ?? "";
+    if (!textToRead || textToRead.trim().length === 0) {
+      const errorMsg =
+        "No text found to read aloud. Please copy some text first.";
+      notify("Jarvis", errorMsg);
+      return {
+        context,
+        sourceText: "",
+        transformedText: errorMsg,
+        promptMode: "direct_query",
+        deliveryMode: "none",
+        inserted: false,
+        copiedToClipboard: false,
+        fallbackCopiedToClipboard: false,
+      };
+    }
+
+    notify("Jarvis", "Reading text aloud...");
+    const ttsResult = await ElevenLabsTtsService.readAloud({
+      text: textToRead,
+    });
+
+    const resultText = ttsResult.success
+      ? `Successfully read ${textToRead.length} characters aloud.`
+      : `Failed to read text aloud: ${ttsResult.error}`;
+
+    return {
+      context,
+      sourceText: textToRead,
+      transformedText: resultText,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
     };
   }
 
@@ -290,6 +442,7 @@ export async function runTextTask(
       const deliveryResult = await deliverTextOutput({
         transformedText,
         deliveryMode: imageExplainDeliveryMode,
+        ttsEnabled,
       });
 
       return {
@@ -301,9 +454,65 @@ export async function runTextTask(
         inserted: deliveryResult.inserted,
         copiedToClipboard: deliveryResult.copiedToClipboard,
         fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+        spokenByTts: deliveryResult.spokenByTts,
+        ttsPlaybackError: deliveryResult.ttsPlaybackError,
       };
     }
     routerRoute = "text_task";
+  }
+
+  if (routerRoute === "background_remove") {
+    if (context.clipboard.kind === "image" && context.clipboard.imagePath) {
+      notify("Jarvis", "Removing background...");
+      const result = await removeBackground({
+        imagePath: context.clipboard.imagePath,
+      });
+
+      if (!result.success) {
+        const errorMsg = `Failed to remove background: ${result.error}`;
+        notify("Jarvis", errorMsg);
+        return {
+          context,
+          sourceText: "",
+          transformedText: errorMsg,
+          promptMode: "direct_query",
+          deliveryMode: "none",
+          inserted: false,
+          copiedToClipboard: false,
+          fallbackCopiedToClipboard: false,
+        };
+      }
+
+      if (result.imageBuffer) {
+        writeClipboardImage(createImageFromBuffer(result.imageBuffer));
+        notify("Jarvis", "Background removed. Image ready to paste.");
+
+        return {
+          context,
+          sourceText: "",
+          transformedText: "Background removed and copied to clipboard.",
+          promptMode: "direct_query",
+          deliveryMode: "none",
+          inserted: false,
+          copiedToClipboard: false,
+          fallbackCopiedToClipboard: false,
+        };
+      }
+    }
+
+    const errorMsg =
+      "No image found to remove background. Please copy an image first.";
+    notify("Jarvis", errorMsg);
+    return {
+      context,
+      sourceText: "",
+      transformedText: errorMsg,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+    };
   }
 
   const plan = {
@@ -337,6 +546,7 @@ export async function runTextTask(
   const deliveryResult = await deliverTextOutput({
     transformedText,
     deliveryMode: plan.deliveryMode,
+    ttsEnabled,
   });
 
   return {
@@ -348,6 +558,8 @@ export async function runTextTask(
     inserted: deliveryResult.inserted,
     copiedToClipboard: deliveryResult.copiedToClipboard,
     fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+    spokenByTts: deliveryResult.spokenByTts,
+    ttsPlaybackError: deliveryResult.ttsPlaybackError,
   };
 }
 

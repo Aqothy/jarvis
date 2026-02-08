@@ -35,7 +35,7 @@ export type TextPromptMode =
   | "direct_query"
   | "dictation_cleanup";
 
-export type TextDeliveryMode = "insert" | "clipboard" | "none";
+export type TextDeliveryMode = "insert" | "clipboard" | "none" | "tts";
 
 export interface TextTaskResult {
   context: ContextSnapshot;
@@ -46,6 +46,8 @@ export interface TextTaskResult {
   inserted: boolean;
   copiedToClipboard: boolean;
   fallbackCopiedToClipboard: boolean;
+  spokenByTts?: boolean;
+  ttsPlaybackError?: string;
 }
 
 export interface ImageTaskRequest {
@@ -81,6 +83,7 @@ export interface AppBridge {
   insertTextAtCursor: (text: string) => Promise<InsertTextAtCursorResult>;
   runTextTask: (request: TextTaskRequest) => Promise<TextTaskResult>;
   runImageTask: (request: ImageTaskRequest) => Promise<ImageTaskResult>;
+  setTtsEnabled: (enabled: boolean) => Promise<void>;
   getMemoryText: () => Promise<string>;
   setMemoryText: (text: string) => Promise<void>;
   captureContextPreview: () => Promise<ContextSnapshot>;

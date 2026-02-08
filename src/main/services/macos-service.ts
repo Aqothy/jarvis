@@ -20,16 +20,19 @@ async function runAppleScript(script: string): Promise<string> {
 function snapshotClipboard(): { text: string; image: Electron.NativeImage } {
   return {
     text: clipboard.readText(),
-    image: clipboard.readImage()
+    image: clipboard.readImage(),
   };
 }
 
-function restoreClipboard(snapshot: { text: string; image: Electron.NativeImage }): void {
+function restoreClipboard(snapshot: {
+  text: string;
+  image: Electron.NativeImage;
+}): void {
   const hasImage = !snapshot.image.isEmpty();
   if (hasImage) {
     clipboard.write({
       text: snapshot.text,
-      image: snapshot.image
+      image: snapshot.image,
     });
     return;
   }
@@ -56,15 +59,15 @@ export class MacOSService {
 
     try {
       const output = await runAppleScript(script);
-      const [name, windowTitle] = output.split("||");
+      const [name, ...windowTitleParts] = output.split("||");
       return {
         name: name || "Unknown",
-        windowTitle: windowTitle || ""
+        windowTitle: windowTitleParts.join("||") || "",
       };
     } catch {
       return {
         name: "Unknown",
-        windowTitle: ""
+        windowTitle: "",
       };
     }
   }
@@ -73,7 +76,9 @@ export class MacOSService {
     const priorClipboard = snapshotClipboard();
     try {
       clipboard.writeText(text);
-      await runAppleScript('tell application "System Events" to keystroke "v" using command down');
+      await runAppleScript(
+        'tell application "System Events" to keystroke "v" using command down',
+      );
       // Allow the target app time to read the clipboard before we restore it.
       await delay(PASTE_SETTLE_MS);
       return true;
