@@ -6,6 +6,7 @@ import {
   Tray,
   globalShortcut,
   nativeImage,
+  screen,
 } from "electron";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -17,15 +18,16 @@ import {
   shutdownGradiumSttConnection,
 } from "./services/gradium-stt-service";
 
+type RendererHash = "#settings" | "#pill";
+
 log.initialize();
 
-let mainWindow: BrowserWindow | null = null;
+let settingsWindow: BrowserWindow | null = null;
+let pillWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
 function resolvePreloadPath(): string {
-  // Sandboxed preload scripts must be CJS. With "type": "module" in package.json,
-  // electron-vite outputs CJS as .cjs. We check .cjs first, then fall back to .js.
   const cjsPath = join(__dirname, "../preload/index.cjs");
   if (existsSync(cjsPath)) {
     return cjsPath;
@@ -33,19 +35,82 @@ function resolvePreloadPath(): string {
   return join(__dirname, "../preload/index.js");
 }
 
-function createWindow(): void {
-  if (mainWindow && !mainWindow.isDestroyed()) {
+function loadRendererRoute(
+  targetWindow: BrowserWindow,
+  hash: RendererHash,
+): void {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+
+  if (rendererUrl) {
+    const url = new URL(rendererUrl);
+    url.hash = hash;
+    targetWindow.loadURL(url.toString());
     return;
   }
 
-  mainWindow = new BrowserWindow({
+  targetWindow.loadFile(join(__dirname, "../renderer/index.html"), {
+    hash: hash.slice(1),
+  });
+}
+
+function positionPillWindow(): void {
+  if (!pillWindow || pillWindow.isDestroyed()) {
+    return;
+  }
+
+  const currentBounds = pillWindow.getBounds();
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const area = display.workArea;
+
+  const x = Math.round(area.x + (area.width - currentBounds.width) / 2);
+  const y = Math.round(area.y + area.height - currentBounds.height - 50);
+
+  pillWindow.setPosition(x, y, false);
+}
+
+function showPillWindow(): void {
+  if (!pillWindow || pillWindow.isDestroyed()) {
+    return;
+  }
+
+  positionPillWindow();
+
+  if (pillWindow.isMinimized()) {
+    pillWindow.restore();
+  }
+
+  if (!pillWindow.isVisible()) {
+    if (process.platform === "darwin") {
+      pillWindow.showInactive();
+    } else {
+      pillWindow.show();
+    }
+  }
+
+  pillWindow.moveTop();
+}
+
+function createPillWindow(): void {
+  if (pillWindow && !pillWindow.isDestroyed()) {
+    return;
+  }
+
+  pillWindow = new BrowserWindow({
     show: false,
-    width: 860,
-    height: 640,
-    minWidth: 720,
-    minHeight: 520,
-    title: "Jarvis Settings",
-    backgroundColor: "#0f1216",
+    width: 460,
+    height: 118,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    movable: false,
+    focusable: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    alwaysOnTop: true,
+    backgroundColor: "#00000000",
     webPreferences: {
       preload: resolvePreloadPath(),
       sandbox: true,
@@ -55,41 +120,80 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.removeMenu();
+  pillWindow.setAlwaysOnTop(true, "screen-saver");
+  pillWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  loadRendererRoute(pillWindow, "#pill");
 
-  mainWindow.on("close", (event) => {
-    if (!isQuitting) {
-      event.preventDefault();
-      mainWindow?.hide();
-    }
+  pillWindow.on("ready-to-show", () => {
+    positionPillWindow();
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  pillWindow.on("closed", () => {
+    pillWindow = null;
   });
-
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
-  }
 }
 
-function showSettingsWindow(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow();
-  }
-
-  if (!mainWindow || mainWindow.isDestroyed()) {
+function createSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
     return;
   }
 
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
+  settingsWindow = new BrowserWindow({
+    show: false,
+    width: 560,
+    height: 640,
+    minWidth: 480,
+    minHeight: 520,
+    title: "Jarvis Settings",
+    type: "normal",
+    alwaysOnTop: false,
+    resizable: true,
+    movable: true,
+    focusable: true,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 18 },
+    vibrancy: "under-window",
+    visualEffectState: "active",
+    backgroundColor: "#050505",
+    webPreferences: {
+      preload: resolvePreloadPath(),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  });
+
+  settingsWindow.removeMenu();
+  loadRendererRoute(settingsWindow, "#settings");
+
+  settingsWindow.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      settingsWindow?.hide();
+    }
+  });
+
+  settingsWindow.on("closed", () => {
+    settingsWindow = null;
+  });
+}
+
+function showSettingsWindow(): void {
+  if (!settingsWindow || settingsWindow.isDestroyed()) {
+    createSettingsWindow();
   }
 
-  mainWindow.show();
-  mainWindow.focus();
+  if (!settingsWindow || settingsWindow.isDestroyed()) {
+    return;
+  }
+
+  if (settingsWindow.isMinimized()) {
+    settingsWindow.restore();
+  }
+
+  settingsWindow.show();
+  settingsWindow.focus();
 }
 
 function createTrayIcon(): Electron.NativeImage {
@@ -113,6 +217,7 @@ function createStatusTray(): void {
   tray.setToolTip("Jarvis");
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      { type: "separator" },
       {
         label: "Settings",
         click: () => showSettingsWindow(),
@@ -129,21 +234,24 @@ function createStatusTray(): void {
 }
 
 function emitShortcutEvent(channel: string): void {
-  if (!mainWindow) {
-    createWindow();
+  if (!pillWindow || pillWindow.isDestroyed()) {
+    createPillWindow();
   }
-  if (!mainWindow) {
+
+  if (!pillWindow || pillWindow.isDestroyed()) {
     return;
   }
 
-  if (mainWindow.webContents.isLoading()) {
-    mainWindow.webContents.once("did-finish-load", () => {
-      mainWindow?.webContents.send(channel);
+  showPillWindow();
+
+  if (pillWindow.webContents.isLoading()) {
+    pillWindow.webContents.once("did-finish-load", () => {
+      pillWindow?.webContents.send(channel);
     });
     return;
   }
 
-  mainWindow.webContents.send(channel);
+  pillWindow.webContents.send(channel);
 }
 
 function registerPushToTalkShortcuts(): void {
@@ -152,6 +260,8 @@ function registerPushToTalkShortcuts(): void {
   });
   if (!registeredDefault) {
     log.warn("Failed to register global shortcut: Alt+Space");
+  } else {
+    log.info("Registered global shortcut: Alt+Space");
   }
 
   const registeredDictation = globalShortcut.register("Alt+Shift+Space", () => {
@@ -159,6 +269,8 @@ function registerPushToTalkShortcuts(): void {
   });
   if (!registeredDictation) {
     log.warn("Failed to register global shortcut: Alt+Shift+Space");
+  } else {
+    log.info("Registered global shortcut: Alt+Shift+Space");
   }
 }
 
@@ -171,9 +283,14 @@ app.whenReady().then(() => {
         : "Failed to initialize Gradium STT connection.";
     log.warn("Gradium STT init failed:", message);
   });
-  createWindow();
+
+  createPillWindow();
   createStatusTray();
   registerPushToTalkShortcuts();
+
+  screen.on("display-metrics-changed", () => positionPillWindow());
+  screen.on("display-added", () => positionPillWindow());
+  screen.on("display-removed", () => positionPillWindow());
 
   if (process.platform === "darwin") {
     app.dock.hide();

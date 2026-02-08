@@ -1,84 +1,116 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type {
-  ContextSnapshot,
-  PermissionStatus,
-} from "../../main/types";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import type { PermissionStatus } from "../../main/types";
 import { useAudioCapture } from "./hooks/useAudioCapture";
+import {
+  Sparkles,
+  Shield,
+  Keyboard,
+  Brain,
+  ArrowRight,
+  Circle,
+  XCircle,
+  Check,
+} from "lucide-react";
 
+type WindowMode = "settings" | "pill";
 type TaskState = "idle" | "running_text";
 type RecordingMode = "auto" | "force_dictation";
+type DisplayState =
+  | "idle"
+  | "recording"
+  | "transcribing"
+  | "running_text"
+  | "error";
 
 const INITIAL_PERMISSIONS: PermissionStatus = {
   microphone: false,
   accessibility: false,
 };
 
+const WAVE_BAR_COUNT = 16;
+const WAVE_BAR_BASELINE_HEIGHT = 4;
+const WAVE_BAR_MAX_HEIGHT = 28;
+const WAVE_BAR_PROFILE: readonly number[] = [
+  0.45, 0.58, 0.72, 0.86, 0.96, 1, 0.92, 0.8,
+  0.8, 0.92, 1, 0.96, 0.86, 0.72, 0.58, 0.45,
+];
+
+function useAutoClearError(
+  error: string | null,
+  setError: Dispatch<SetStateAction<string | null>>,
+): void {
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setError(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [error, setError]);
+}
+
+function getWindowMode(): WindowMode {
+  const hash = window.location.hash.toLowerCase();
+  return hash.includes("pill") ? "pill" : "settings";
+}
+
 export function App(): React.ReactElement {
+  const mode = getWindowMode();
+
+  useEffect(() => {
+    document.body.dataset.windowMode = mode;
+    return () => {
+      document.body.removeAttribute("data-window-mode");
+    };
+  }, [mode]);
+
+  if (mode === "pill") {
+    return <PillWindow />;
+  }
+
+  return <SettingsWindow />;
+}
+
+function SettingsWindow(): React.ReactElement {
   const bridge = window.jarvis;
 
   const [permissions, setPermissions] =
     useState<PermissionStatus>(INITIAL_PERMISSIONS);
-  const [contextPreview, setContextPreview] = useState<ContextSnapshot | null>(
-    null,
-  );
-  const [taskState, setTaskState] = useState<TaskState>("idle");
-  const taskStateRef = useRef<TaskState>("idle");
-  const recordingModeRef = useRef<RecordingMode>("auto");
   const [memoryText, setMemoryText] = useState<string>("");
   const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { captureState, captureStateRef, startCapture, stopCapture, teardown } =
-    useAudioCapture(bridge);
-
-  // Derive the display state from capture + task states.
-  const displayState = error
-    ? "error"
-    : captureState !== "idle"
-      ? captureState
-      : taskState;
-
-  function setTaskStateNow(next: TaskState): void {
-    taskStateRef.current = next;
-    setTaskState(next);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Permissions
-  // ---------------------------------------------------------------------------
 
   const refreshPermissions = useCallback(async (): Promise<void> => {
     const status = await bridge.getPermissionStatus();
     setPermissions(status);
   }, [bridge]);
 
-  const requestAccessibility = useCallback(async (): Promise<void> => {
-    const granted = await bridge.requestAccessibilityPermission();
-    if (!granted) {
-      setError(
-        "Accessibility permission is required for reliable cursor insertion.",
-      );
-    }
-    const status = await bridge.getPermissionStatus();
-    setPermissions(status);
-  }, [bridge]);
-
-  // ---------------------------------------------------------------------------
-  // Context preview
-  // ---------------------------------------------------------------------------
-
-  const refreshContextPreview = useCallback(async (): Promise<void> => {
+  const requestPermissions = useCallback(async (): Promise<void> => {
     try {
-      const snapshot = await bridge.captureContextPreview();
-      setContextPreview(snapshot);
+      const microphoneGranted = await bridge.requestMicrophonePermission();
+      const accessibilityGranted = await bridge.requestAccessibilityPermission();
+
+      if (!microphoneGranted || !accessibilityGranted) {
+        setError(
+          "Microphone and Accessibility permissions are required for voice input.",
+        );
+      }
     } catch (err) {
       setError(
-        err instanceof Error
-          ? err.message
-          : "Failed to capture context preview.",
+        err instanceof Error ? err.message : "Failed to request permissions.",
       );
     }
-  }, [bridge]);
+
+    await refreshPermissions();
+  }, [bridge, refreshPermissions]);
 
   const refreshMemories = useCallback(async (): Promise<void> => {
     try {
@@ -101,26 +133,223 @@ export function App(): React.ReactElement {
     }
   }, [bridge, memoryText, refreshMemories]);
 
-  // ---------------------------------------------------------------------------
-  // Recording + task orchestration
-  // ---------------------------------------------------------------------------
+  useAutoClearError(error, setError);
+
+  useEffect(() => {
+    if (!bridge) {
+      setError("Preload bridge unavailable. Close and restart the app.");
+      return;
+    }
+
+    refreshPermissions().catch(() => undefined);
+    refreshMemories().catch(() => undefined);
+  }, [bridge, refreshMemories, refreshPermissions]);
+
+  return (
+    <main className="app-shell app-shell-settings">
+      <div className="settings-page">
+        <header className="page-header">
+          <div className="logo-section">
+            <div className="logo-icon">
+              <Sparkles size={20} />
+            </div>
+            <div className="logo-text">
+              <h1>Jarvis</h1>
+              <span className="version">v0.1.0</span>
+            </div>
+          </div>
+        </header>
+
+        <div className="settings-grid">
+          <section className="card">
+            <div className="card-header">
+              <div className="card-icon">
+                <Shield size={16} />
+              </div>
+              <h2>Permissions</h2>
+            </div>
+
+            <div className="card-content">
+              <div className="permission-item">
+                <div className="permission-info">
+                  <span className="permission-name">Microphone</span>
+                  <span className="permission-desc">Voice input capture</span>
+                </div>
+                <span
+                  className={`status-badge ${permissions.microphone ? "granted" : "missing"}`}
+                >
+                  {permissions.microphone ? "Granted" : "Missing"}
+                </span>
+              </div>
+
+              <div className="permission-item">
+                <div className="permission-info">
+                  <span className="permission-name">Accessibility</span>
+                  <span className="permission-desc">
+                    Text insertion at cursor
+                  </span>
+                </div>
+                <span
+                  className={`status-badge ${permissions.accessibility ? "granted" : "missing"}`}
+                >
+                  {permissions.accessibility ? "Granted" : "Missing"}
+                </span>
+              </div>
+
+              {(!permissions.microphone || !permissions.accessibility) && (
+                <button className="btn-grant" onClick={requestPermissions}>
+                  <span>Grant Permissions</span>
+                  <ArrowRight size={14} />
+                </button>
+              )}
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <div className="card-icon">
+                <Keyboard size={16} />
+              </div>
+              <h2>Shortcuts</h2>
+            </div>
+
+            <div className="card-content">
+              <div className="shortcut-item">
+                <span className="shortcut-name">Voice Command</span>
+                <div className="keys">
+                  <kbd>Option</kbd>
+                  <span className="key-separator">+</span>
+                  <kbd>Space</kbd>
+                </div>
+              </div>
+
+              <div className="shortcut-item">
+                <span className="shortcut-name">Dictation Only</span>
+                <div className="keys">
+                  <kbd>Option</kbd>
+                  <span className="key-separator">+</span>
+                  <kbd>Shift</kbd>
+                  <span className="key-separator">+</span>
+                  <kbd>Space</kbd>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="card card-wide">
+            <div className="card-header">
+              <div className="card-icon">
+                <Brain size={16} />
+              </div>
+              <h2>Memory</h2>
+            </div>
+
+            <div className="card-content">
+              <p className="card-desc">
+                Personal context Jarvis remembers across sessions. One fact per
+                line.
+              </p>
+              <textarea
+                value={memoryText}
+                onChange={(event) => setMemoryText(event.target.value)}
+                placeholder={
+                  "name is anthony\ndog called buns\nfriend called jason"
+                }
+                rows={4}
+              />
+              <div className="card-actions">
+                <button
+                  className="btn-secondary"
+                  disabled={memoryBusy}
+                  onClick={refreshMemories}
+                >
+                  Reload
+                </button>
+                <button
+                  className="btn-primary"
+                  disabled={memoryBusy}
+                  onClick={handleSaveMemoryText}
+                >
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div className={`error-toast ${error ? "visible" : ""}`}>{error}</div>
+    </main>
+  );
+}
+
+function PillWindow(): React.ReactElement {
+  const bridge = window.jarvis;
+
+  const [taskState, setTaskState] = useState<TaskState>("idle");
+  const taskStateRef = useRef<TaskState>("idle");
+  const recordingModeRef = useRef<RecordingMode>("auto");
+  const [error, setError] = useState<string | null>(null);
+  const [pillVisible, setPillVisible] = useState<boolean>(false);
+
+  const {
+    captureState,
+    audioLevel,
+    captureStateRef,
+    startCapture,
+    stopCapture,
+    teardown,
+  } = useAudioCapture(bridge);
+
+  const displayState: DisplayState = error
+    ? "error"
+    : captureState !== "idle"
+      ? captureState
+      : taskState;
+
+  const waveBars = useMemo((): Array<{ heightPx: number; opacity: number }> => {
+    if (captureState !== "recording") {
+      return Array.from({ length: WAVE_BAR_COUNT }, () => ({
+        heightPx: WAVE_BAR_BASELINE_HEIGHT,
+        opacity: 0.35,
+      }));
+    }
+
+    const activityLevel = audioLevel > 0 ? Math.max(audioLevel, 0.08) : 0;
+
+    return WAVE_BAR_PROFILE.map((profile) => {
+      const weightedLevel = Math.min(1, activityLevel * profile);
+      const heightPx =
+        WAVE_BAR_BASELINE_HEIGHT +
+        Math.round((WAVE_BAR_MAX_HEIGHT - WAVE_BAR_BASELINE_HEIGHT) * weightedLevel);
+      const opacity = 0.42 + weightedLevel * 0.58;
+
+      return { heightPx, opacity };
+    });
+  }, [audioLevel, captureState]);
+
+  function setTaskStateNow(next: TaskState): void {
+    taskStateRef.current = next;
+    setTaskState(next);
+  }
 
   const handleStartRecording = useCallback(
     async (mode: RecordingMode): Promise<void> => {
       recordingModeRef.current = mode;
       setError(null);
+      setPillVisible(true);
 
       try {
-        refreshPermissions().catch(() => undefined);
         await startCapture();
       } catch (err) {
         recordingModeRef.current = "auto";
+        setPillVisible(true);
         setError(
           err instanceof Error ? err.message : "Unable to start recording.",
         );
       }
     },
-    [refreshPermissions, startCapture],
+    [startCapture],
   );
 
   const handleStopRecording = useCallback(async (): Promise<void> => {
@@ -130,22 +359,23 @@ export function App(): React.ReactElement {
     try {
       const transcript = await stopCapture();
       if (!transcript) {
+        setPillVisible(false);
         return;
       }
 
       setTaskStateNow("running_text");
-      // TODO: could be image too, need to handle image as well
-      const textTaskResult = await bridge.runTextTask({
+      await bridge.runTextTask({
         instruction: transcript,
         mode,
       });
-      setContextPreview(textTaskResult.context);
       setTaskStateNow("idle");
+      setPillVisible(false);
     } catch (err) {
       setTaskStateNow("idle");
+      setPillVisible(true);
       setError(err instanceof Error ? err.message : "Task failed.");
     }
-  }, [bridge, refreshMemories, stopCapture]);
+  }, [bridge, stopCapture]);
 
   const handlePushToTalk = useCallback(
     async (mode: RecordingMode): Promise<void> => {
@@ -154,26 +384,32 @@ export function App(): React.ReactElement {
         return;
       }
 
-      if (captureStateRef.current === "idle" && taskStateRef.current === "idle") {
+      if (
+        captureStateRef.current === "idle" &&
+        taskStateRef.current === "idle"
+      ) {
         await handleStartRecording(mode);
       }
     },
     [captureStateRef, handleStartRecording, handleStopRecording],
   );
 
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
+  useAutoClearError(error, setError);
+
+  useEffect(() => {
+    if (!error) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setPillVisible(false), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [error]);
 
   useEffect(() => {
     if (!bridge) {
       setError("Preload bridge unavailable. Close and restart the app.");
       return;
     }
-
-    refreshPermissions().catch(() => undefined);
-    refreshContextPreview().catch(() => undefined);
-    refreshMemories().catch(() => undefined);
 
     const unsubscribePushToTalk = bridge.onPushToTalkShortcut(() => {
       handlePushToTalk("auto").catch(() => undefined);
@@ -189,92 +425,64 @@ export function App(): React.ReactElement {
       unsubscribeDictationPushToTalk();
       teardown({ closeContext: true }).catch(() => undefined);
     };
-  }, [
-    bridge,
-    refreshPermissions,
-    refreshContextPreview,
-    refreshMemories,
-    handlePushToTalk,
-    teardown,
-  ]);
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  }, [bridge, handlePushToTalk, teardown]);
 
   return (
-    <main className="app-shell">
-      <div className="container">
-        <header>
-          <h1>Jarvis</h1>
-          <div className="status-badge" data-state={displayState}>
-            {displayState === "recording" ? "● Recording" : displayState}
-          </div>
-        </header>
+    <main className="app-shell app-shell-pill">
+      <div
+        className={`pill-bar ${pillVisible ? "visible" : ""}`}
+        data-state={displayState}
+      >
+        <div className="status-indicator">
+          <StatusIcon state={displayState} />
+        </div>
 
-        <section className="permissions">
-          <div className="permission-item">
-            <span>Microphone</span>
-            <span className={permissions.microphone ? "granted" : "missing"}>
-              {permissions.microphone ? "Granted" : "Missing"}
-            </span>
-          </div>
-          <div className="permission-item">
-            <span>Accessibility</span>
-            <span className={permissions.accessibility ? "granted" : "missing"}>
-              {permissions.accessibility ? "Granted" : "Missing"}
-            </span>
-          </div>
-          <div className="shortcut-hint">
-            Auto: <kbd>Option + Space</kbd> | Dictation Only:{" "}
-            <kbd>Option + Shift + Space</kbd>
-          </div>
-          <div className="actions">
-            <button onClick={refreshPermissions}>Refresh</button>
-            <button onClick={requestAccessibility}>Request Access</button>
-            <button onClick={refreshContextPreview}>Refresh Preview</button>
-          </div>
-        </section>
+        <div className="pill-divider" />
 
-        <section className="memory-panel">
-          <h3>Memory</h3>
-          <p className="memory-hint">
-            One fact per line. Jarvis uses these lines as user memory context.
-          </p>
-
-          <div className="memory-create">
-            <textarea
-              value={memoryText}
-              onChange={(event) => setMemoryText(event.target.value)}
-              placeholder={"name is anthony\ndog called buns\nfriend called jason"}
-              rows={8}
+        <div className="waveform-container">
+          {waveBars.map((bar, index) => (
+            <div
+              key={index}
+              className="wave-bar"
+              style={{
+                height: `${bar.heightPx}px`,
+                opacity: bar.opacity,
+              }}
             />
-            <div className="memory-create-controls">
-              <button disabled={memoryBusy} onClick={handleSaveMemoryText}>
-                Save Memory
-              </button>
-              <button disabled={memoryBusy} onClick={refreshMemories}>
-                Reload
-              </button>
-            </div>
-          </div>
-        </section>
+          ))}
+        </div>
 
-        {error && (
-          <section className="error-box">
-            <p>{error}</p>
-          </section>
-        )}
+        <div className="pill-divider" />
 
-        <section className="preview">
-          <h3>Context Snapshot</h3>
-          <pre>
-            {contextPreview
-              ? JSON.stringify(contextPreview, null, 2)
-              : "No context captured."}
-          </pre>
-        </section>
+        <div className="ai-indicator">
+          <SparkleGroup />
+        </div>
+      </div>
+
+      <div className={`error-toast error-toast-pill ${error ? "visible" : ""}`}>
+        {error}
       </div>
     </main>
+  );
+}
+
+function StatusIcon({ state }: { state: DisplayState }): React.ReactElement {
+  if (state === "error") {
+    return <XCircle size={20} className="status-icon" />;
+  }
+
+  if (state === "recording") {
+    return <Circle size={20} className="status-icon" fill="currentColor" />;
+  }
+
+  return <Check size={20} className="status-icon" />;
+}
+
+function SparkleGroup(): React.ReactElement {
+  return (
+    <div className="sparkle-group">
+      <Sparkles size={16} className="sparkle sparkle-main" />
+      <Sparkles size={10} className="sparkle sparkle-small" />
+    </div>
   );
 }

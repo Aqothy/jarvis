@@ -3,6 +3,11 @@ import pcmWorkletUrl from "../pcm-capture.worklet.js?url";
 
 const TARGET_SAMPLE_RATE = 24000;
 const FRAME_SAMPLES = 1920;
+const AUDIO_LEVEL_UPDATE_INTERVAL_MS = 24;
+const AUDIO_LEVEL_NOISE_FLOOR = 0.006;
+const AUDIO_LEVEL_SCALE = 16;
+const AUDIO_LEVEL_EXPONENT = 0.72;
+const AUDIO_LEVEL_RELEASE = 0.88;
 
 export type CaptureState = "idle" | "recording" | "transcribing";
 
@@ -14,6 +19,7 @@ interface SttBridge {
 
 interface UseAudioCaptureReturn {
   captureState: CaptureState;
+  audioLevel: number;
   captureStateRef: MutableRefObject<CaptureState>;
   startCapture: () => Promise<void>;
   stopCapture: () => Promise<string>;
@@ -59,9 +65,26 @@ function toPcm16Buffer(input: Float32Array): ArrayBuffer {
   return buffer;
 }
 
+function getRmsLevel(input: Float32Array): number {
+  if (input.length === 0) {
+    return 0;
+  }
+
+  let sum = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    const sample = input[i];
+    sum += sample * sample;
+  }
+
+  return Math.sqrt(sum / input.length);
+}
+
 export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
+  const [audioLevel, setAudioLevel] = useState<number>(0);
   const captureStateRef = useRef<CaptureState>("idle");
+  const audioLevelRef = useRef<number>(0);
+  const lastAudioLevelPublishAtRef = useRef<number>(0);
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -76,6 +99,36 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
   const updateState = useCallback((next: CaptureState): void => {
     captureStateRef.current = next;
     setCaptureState(next);
+  }, []);
+
+  const resetAudioLevel = useCallback((): void => {
+    audioLevelRef.current = 0;
+    lastAudioLevelPublishAtRef.current = 0;
+    setAudioLevel(0);
+  }, []);
+
+  const publishAudioLevel = useCallback((rawLevel: number): void => {
+    const gatedLevel = Math.max(0, rawLevel - AUDIO_LEVEL_NOISE_FLOOR);
+    const scaledLevel = Math.min(1, gatedLevel * AUDIO_LEVEL_SCALE);
+    const shapedLevel = Math.pow(scaledLevel, AUDIO_LEVEL_EXPONENT);
+    const previousLevel = audioLevelRef.current;
+
+    const nextLevel =
+      shapedLevel > previousLevel
+        ? shapedLevel
+        : previousLevel * AUDIO_LEVEL_RELEASE;
+
+    audioLevelRef.current = nextLevel;
+
+    const now = performance.now();
+    if (
+      now - lastAudioLevelPublishAtRef.current >=
+        AUDIO_LEVEL_UPDATE_INTERVAL_MS ||
+      nextLevel === 0
+    ) {
+      lastAudioLevelPublishAtRef.current = now;
+      setAudioLevel(nextLevel);
+    }
   }, []);
 
   const appendAndEmitFrames = useCallback(
@@ -137,6 +190,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       }
 
       pcmBufferIndexRef.current = 0;
+      resetAudioLevel();
 
       if (audioContext && options?.closeContext) {
         audioContextRef.current = null;
@@ -144,7 +198,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
         await audioContext.close().catch(() => undefined);
       }
     },
-    [],
+    [resetAudioLevel],
   );
 
   const startCapture = useCallback(async (): Promise<void> => {
@@ -152,6 +206,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       return;
     }
 
+    resetAudioLevel();
     updateState("recording");
 
     const sttStartPromise = bridge.startSttSession();
@@ -214,6 +269,7 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
           return;
         }
 
+        publishAudioLevel(getRmsLevel(event.data));
         appendAndEmitFrames(downsampleToTarget(event.data, capturedSampleRate));
       };
 
@@ -236,10 +292,18 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       if (sttStarted) {
         await bridge.stopSttSession().catch(() => undefined);
       }
+      resetAudioLevel();
       updateState("idle");
       throw err;
     }
-  }, [appendAndEmitFrames, bridge, teardown, updateState]);
+  }, [
+    appendAndEmitFrames,
+    bridge,
+    publishAudioLevel,
+    resetAudioLevel,
+    teardown,
+    updateState,
+  ]);
 
   const stopCapture = useCallback(async (): Promise<string> => {
     if (captureStateRef.current !== "recording") {
@@ -265,12 +329,14 @@ export function useAudioCapture(bridge: SttBridge): UseAudioCaptureReturn {
       return sttResult.transcript.trim();
     } finally {
       await teardownPromise.catch(() => undefined);
+      resetAudioLevel();
       updateState("idle");
     }
-  }, [bridge, teardown, updateState]);
+  }, [bridge, resetAudioLevel, teardown, updateState]);
 
   return {
     captureState,
+    audioLevel,
     captureStateRef,
     startCapture,
     stopCapture,
