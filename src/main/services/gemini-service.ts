@@ -7,10 +7,7 @@ import type {
   TextDeliveryMode,
   TextPromptMode,
 } from "../types";
-import {
-  AppToneService,
-  isCodingEnvironmentContext,
-} from "./app-tone-service";
+import { AppToneService, isCodingEnvironmentContext } from "./app-tone-service";
 import { WeatherService } from "./weather-service";
 
 function getGeminiApiKey(): string {
@@ -114,7 +111,9 @@ export interface TaskRouterDecision {
   rewrittenInstruction: string;
 }
 
-function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMode {
+function getDefaultDeliveryModeForRoute(
+  route: TaskRouterRoute,
+): TextDeliveryMode {
   if (
     route === "image_edit" ||
     route === "image_generate" ||
@@ -127,10 +126,19 @@ function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMod
 
 function normalizeDeliveryModeForRoute(
   route: TaskRouterRoute,
+  textMode: TextPromptMode,
   requestedMode: TextDeliveryMode,
 ): TextDeliveryMode {
   if (route === "webpage_read") {
     return "clipboard";
+  }
+
+  if (route === "text_task") {
+    const insertAllowed =
+      textMode === "clipboard_rewrite" || textMode === "dictation_cleanup";
+    if (!insertAllowed && requestedMode === "insert") {
+      return "clipboard";
+    }
   }
 
   if (
@@ -217,7 +225,7 @@ function parseTaskRouterDecision(
     const deliveryMode =
       typeof parsed.deliveryMode === "string" &&
       isTextDeliveryMode(parsed.deliveryMode)
-        ? normalizeDeliveryModeForRoute(route, parsed.deliveryMode)
+        ? normalizeDeliveryModeForRoute(route, textMode, parsed.deliveryMode)
         : getDefaultDeliveryModeForRoute(route);
     const rewrittenInstruction =
       typeof parsed.rewrittenInstruction === "string" &&
@@ -251,7 +259,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) For text_task, questions/new information (direct_query) must use deliveryMode clipboard, not insert. 10) Use deliveryMode insert only when user is explicitly rewriting/editing text (clipboard_rewrite or dictation cleanup style requests). 11) Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
@@ -613,10 +621,7 @@ export async function runWebsiteReadFunctionCall(params: {
   });
 
   const functionCall = response.functionCalls?.[0];
-  if (
-    !functionCall ||
-    functionCall.name !== "get_readable_website_content"
-  ) {
+  if (!functionCall || functionCall.name !== "get_readable_website_content") {
     throw new Error("Website function call was not produced by the model.");
   }
 
@@ -625,7 +630,7 @@ export async function runWebsiteReadFunctionCall(params: {
     typeof functionArgs.url === "string" ? functionArgs.url.trim() : "";
   const clipboardUrl = extractFirstHttpUrl(params.clipboardText);
   const resolvedUrl =
-    requestedUrl.length > 0 ? requestedUrl : clipboardUrl ?? "";
+    requestedUrl.length > 0 ? requestedUrl : (clipboardUrl ?? "");
 
   if (resolvedUrl.trim().length === 0) {
     throw new Error(
@@ -633,9 +638,8 @@ export async function runWebsiteReadFunctionCall(params: {
     );
   }
 
-  const summaryStyle = functionArgs.summary_style === "detailed"
-    ? "detailed"
-    : "brief";
+  const summaryStyle =
+    functionArgs.summary_style === "detailed" ? "detailed" : "brief";
   const summarySystemPrompt =
     summaryStyle === "detailed"
       ? "Read and summarize the content of the provided website URL. Use Google Search tool when needed to fetch the page content and produce a clear, spoken-friendly summary with important details. Return plain text only."
@@ -663,9 +667,5 @@ export async function runWebsiteReadFunctionCall(params: {
     throw new Error("Website summary generation returned empty content.");
   }
 
-  return [
-    `Website: ${resolvedUrl}`,
-    "",
-    summaryText,
-  ].join("\n");
+  return [`Website: ${resolvedUrl}`, "", summaryText].join("\n");
 }
