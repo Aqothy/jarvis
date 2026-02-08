@@ -852,7 +852,8 @@ export async function runCalendarListFunctionCall(params: {
       "To use calendar features:",
       "1. Set up Google Calendar API credentials",
       "2. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env",
-      "3. Run authentication flow",
+      "3. Open Jarvis Settings and click Connect Google Calendar",
+      "   (or run /auth-calendar)",
       "",
       "See README for detailed setup instructions.",
     ].join("\n");

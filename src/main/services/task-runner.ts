@@ -37,6 +37,7 @@ import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
 import { removeBackground } from "./background-removal-service";
 import { organizeDesktopByFileType } from "./desktop-organizer-service";
 import { getTtsEnabled, getTtsProvider } from "./tts-state-service";
+import { authenticateCalendar } from "./calendar-auth-helper";
 
 interface WeatherQuery {
   location?: string;
@@ -186,6 +187,23 @@ function parseWeatherQuery(instruction: string): WeatherQuery {
 
 function requiresClipboardTextForMode(mode: TextPromptMode): boolean {
   return mode === "clipboard_rewrite" || mode === "clipboard_explain";
+}
+
+function isCalendarAuthenticationInstruction(instruction: string): boolean {
+  const normalized = instruction.trim().toLowerCase();
+
+  if (normalized === "/auth-calendar" || normalized === "/calendar-auth") {
+    return true;
+  }
+
+  return (
+    /^(authenticate|connect|authorize)\s+(my\s+)?(google\s+)?calendar$/.test(
+      normalized,
+    ) ||
+    /^(sign in|login|log in)\s+(to\s+)?(my\s+)?(google\s+)?calendar$/.test(
+      normalized,
+    )
+  );
 }
 
 function pluralize(count: number, singular: string, plural: string): string {
@@ -394,6 +412,42 @@ export async function runTextTask(
   const context = await captureContextSnapshot({
     persistClipboardImage: true,
   });
+
+  if (isCalendarAuthenticationInstruction(request.instruction)) {
+    notify("Jarvis", "Opening Google Calendar authentication...");
+    const authResult = await authenticateCalendar();
+    const transformedText = authResult.success
+      ? "Google Calendar authentication successful. You can now ask about your schedule."
+      : `Google Calendar authentication failed: ${authResult.error ?? "Unknown error"}`;
+    if (authResult.success) {
+      notify("Jarvis", "Google Calendar connected.");
+    } else {
+      notify("Jarvis", truncateForNotification(transformedText, 120));
+    }
+
+    const deliveryMode: TextDeliveryMode = "clipboard";
+    const deliveryResult = await deliverTextOutput({
+      transformedText,
+      deliveryMode,
+      ttsEnabled,
+      ttsProvider,
+      transcript: request.instruction,
+      context,
+    });
+
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "direct_query",
+      deliveryMode,
+      inserted: deliveryResult.inserted,
+      copiedToClipboard: deliveryResult.copiedToClipboard,
+      fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      spokenByTts: deliveryResult.spokenByTts,
+      ttsPlaybackError: deliveryResult.ttsPlaybackError,
+    };
+  }
 
   let routedInstruction = request.instruction;
   let routerRoute: TaskRouterRoute = "text_task";

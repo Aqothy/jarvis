@@ -18,6 +18,7 @@ import {
   Shield,
   Keyboard,
   Brain,
+  CalendarDays,
   Volume2,
   Mic,
   ArrowRight,
@@ -106,6 +107,9 @@ function SettingsWindow(): React.ReactElement {
     useState<SpeechProvider>("gradium");
   const [memoryText, setMemoryText] = useState<string>("");
   const [memoryBusy, setMemoryBusy] = useState<boolean>(false);
+  const [calendarAuthenticated, setCalendarAuthenticated] =
+    useState<boolean>(false);
+  const [calendarAuthBusy, setCalendarAuthBusy] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshPermissions = useCallback(async (): Promise<void> => {
@@ -138,6 +142,19 @@ function SettingsWindow(): React.ReactElement {
       setMemoryText(text);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load memories.");
+    }
+  }, [bridge]);
+
+  const refreshCalendarAuthStatus = useCallback(async (): Promise<void> => {
+    try {
+      const isAuthenticated = await bridge.calendarCheckAuth();
+      setCalendarAuthenticated(isAuthenticated);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to check calendar authentication.",
+      );
     }
   }, [bridge]);
 
@@ -199,6 +216,29 @@ function SettingsWindow(): React.ReactElement {
     }
   }, [bridge, memoryText, refreshMemories]);
 
+  const handleCalendarAuthenticate = useCallback(async (): Promise<void> => {
+    setCalendarAuthBusy(true);
+    try {
+      const authResult = await bridge.calendarAuthenticate();
+      if (!authResult.success) {
+        setCalendarAuthenticated(false);
+        setError(authResult.error || "Calendar authentication failed.");
+        return;
+      }
+
+      await refreshCalendarAuthStatus();
+    } catch (err) {
+      setCalendarAuthenticated(false);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Calendar authentication failed.",
+      );
+    } finally {
+      setCalendarAuthBusy(false);
+    }
+  }, [bridge, refreshCalendarAuthStatus]);
+
   useAutoClearError(error, setError);
 
   useEffect(() => {
@@ -209,8 +249,15 @@ function SettingsWindow(): React.ReactElement {
 
     refreshPermissions().catch(() => undefined);
     refreshMemories().catch(() => undefined);
+    refreshCalendarAuthStatus().catch(() => undefined);
     refreshSpeechPreferences().catch(() => undefined);
-  }, [bridge, refreshMemories, refreshPermissions, refreshSpeechPreferences]);
+  }, [
+    bridge,
+    refreshCalendarAuthStatus,
+    refreshMemories,
+    refreshPermissions,
+    refreshSpeechPreferences,
+  ]);
 
   return (
     <main className="app-shell app-shell-settings">
@@ -300,6 +347,47 @@ function SettingsWindow(): React.ReactElement {
                   <kbd>Space</kbd>
                 </div>
               </div>
+            </div>
+          </section>
+
+          <section className="card">
+            <div className="card-header">
+              <div className="card-icon">
+                <CalendarDays size={16} />
+              </div>
+              <h2>Google Calendar</h2>
+            </div>
+
+            <div className="card-content">
+              <div className="permission-item">
+                <div className="permission-info">
+                  <span className="permission-name">Authentication</span>
+                  <span className="permission-desc">
+                    Read-only access for event listing
+                  </span>
+                </div>
+                <span
+                  className={`status-badge ${calendarAuthenticated ? "granted" : "missing"}`}
+                >
+                  {calendarAuthenticated ? "Connected" : "Not Connected"}
+                </span>
+              </div>
+              <button
+                className="btn-grant"
+                disabled={calendarAuthBusy}
+                onClick={() => {
+                  handleCalendarAuthenticate().catch(() => undefined);
+                }}
+              >
+                <span>
+                  {calendarAuthBusy
+                    ? "Opening OAuth..."
+                    : calendarAuthenticated
+                      ? "Re-authenticate"
+                      : "Connect Google Calendar"}
+                </span>
+                <ArrowRight size={14} />
+              </button>
             </div>
           </section>
 

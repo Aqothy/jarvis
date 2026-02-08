@@ -416,6 +416,11 @@ body[data-window-mode="overlay"] #root {
   height: 14px;
 }
 
+.btn-grant:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Shortcut Items */
 .shortcut-item {
   display: flex;

@@ -193,7 +193,8 @@ Access and view your Google Calendar events with simple voice commands:
    - Add scope: `https://www.googleapis.com/auth/calendar.readonly`
 
 4. **Authenticate**:
-   - The first time you use a calendar command, you'll need to authenticate
+   - Open Jarvis Settings and click **Connect Google Calendar**
+   - Or run the command `/auth-calendar`
    - Follow the OAuth flow in your browser
    - Grant read-only access to your calendar
 
@@ -317,6 +318,8 @@ src/
 3. Check that your OAuth consent screen is configured with test users
 4. Make sure the redirect URI matches: `http://localhost:3000/oauth2callback`
 5. Try re-authenticating by running the calendar authentication flow again
+   - Use Settings → Google Calendar → Connect Google Calendar
+   - Or run `/auth-calendar`
 6. Look at logs for API errors: `~/Library/Logs/jarvis-desktop-mvp/`
 
 ## Contributing

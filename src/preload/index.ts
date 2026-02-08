@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../main/ipc-channels";
 import type {
   AppBridge,
+  CalendarAuthResult,
   ContextSnapshot,
   InsertTextAtCursorResult,
   ImageTaskRequest,
@@ -70,6 +71,12 @@ const api: AppBridge = {
 
   setMemoryText: (text: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.memorySetText, text),
+
+  calendarAuthenticate: (): Promise<CalendarAuthResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.calendarAuthenticate),
+
+  calendarCheckAuth: (): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.calendarCheckAuth),
 
   onOverlayResponse: (listener: (payload: OverlayPayload) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: OverlayPayload) =>

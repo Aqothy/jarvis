@@ -84,7 +84,7 @@ async function getAuthenticatedClient(): Promise<calendar_v3.Calendar> {
 
   if (!token) {
     throw new Error(
-      "Not authenticated with Google Calendar. Run the /auth-calendar command first.",
+      "Not authenticated with Google Calendar. Connect in Settings or run /auth-calendar first.",
     );
   }
 

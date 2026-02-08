@@ -95,6 +95,11 @@ export interface PermissionStatus {
   accessibility: boolean;
 }
 
+export interface CalendarAuthResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface AppBridge {
   getPermissionStatus: () => Promise<PermissionStatus>;
   requestMicrophonePermission: () => Promise<boolean>;
@@ -112,6 +117,8 @@ export interface AppBridge {
   setTtsEnabled: (enabled: boolean) => Promise<void>;
   getMemoryText: () => Promise<string>;
   setMemoryText: (text: string) => Promise<void>;
+  calendarAuthenticate: () => Promise<CalendarAuthResult>;
+  calendarCheckAuth: () => Promise<boolean>;
   captureContextPreview: () => Promise<ContextSnapshot>;
   onOverlayResponse: (listener: (payload: OverlayPayload) => void) => () => void;
   onPushToTalkShortcut: (listener: () => void) => () => void;
