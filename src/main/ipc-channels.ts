@@ -13,5 +13,7 @@ export const IPC_CHANNELS = {
   runTextTask: "assistant:run-text-task",
   runImageTask: "assistant:run-image-task",
   pushToTalkShortcut: "assistant:push-to-talk-shortcut",
-  pushToTalkDictationShortcut: "assistant:push-to-talk-dictation-shortcut"
+  pushToTalkDictationShortcut: "assistant:push-to-talk-dictation-shortcut",
+  calendarAuthenticate: "assistant:calendar-authenticate",
+  calendarCheckAuth: "assistant:calendar-check-auth"
 } as const;

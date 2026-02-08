@@ -28,6 +28,8 @@ import {
   stopGradiumSttSession,
 } from "./services/gradium-stt-service";
 import { runImageTask, runTextTask } from "./services/task-runner";
+import { authenticateCalendar } from "./services/calendar-auth-helper";
+import { CalendarService } from "./services/calendar-service";
 
 /**
  * Registers listeners for messages coming from the Renderer process.
@@ -150,6 +152,20 @@ export function registerIpcHandlers(): void {
     IPC_CHANNELS.runImageTask,
     async (_event, request: ImageTaskRequest): Promise<ImageTaskResult> => {
       return runImageTask(request);
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.calendarAuthenticate,
+    async (): Promise<{ success: boolean; error?: string }> => {
+      return authenticateCalendar();
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.calendarCheckAuth,
+    async (): Promise<boolean> => {
+      return CalendarService.isAuthenticated();
     },
   );
 }

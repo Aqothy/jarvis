@@ -12,6 +12,7 @@ import {
   isCodingEnvironmentContext,
 } from "./app-tone-service";
 import { WeatherService } from "./weather-service";
+import { CalendarService } from "./calendar-service";
 
 function getGeminiApiKey(): string {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -91,6 +92,11 @@ interface WebsiteReadFunctionArgs {
   summary_style?: "brief" | "detailed";
 }
 
+interface CalendarListFunctionArgs {
+  timeframe?: "today" | "week" | "upcoming";
+  max_results?: number;
+}
+
 export type TaskRouterRoute =
   | "text_task"
   | "image_edit"
@@ -99,7 +105,8 @@ export type TaskRouterRoute =
   | "weather_query"
   | "webpage_read"
   | "tts_read_aloud"
-  | "background_remove";
+  | "background_remove"
+  | "calendar_list";
 
 interface TaskRouterRawResponse {
   route?: string;
@@ -164,7 +171,8 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "weather_query" ||
     value === "webpage_read" ||
     value === "tts_read_aloud" ||
-    value === "background_remove"
+    value === "background_remove" ||
+    value === "calendar_list"
   );
 }
 
@@ -263,7 +271,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, tts_read_aloud, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to read existing copied text aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud and deliveryMode none. 9) If user asks for new information and explicitly asks to read/speak it aloud, keep the route (text_task/weather_query/etc.) and set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 11) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, tts_read_aloud, background_remove, calendar_list. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none, tts. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to read existing copied text aloud (e.g., 'read this article', 'read this aloud'), choose tts_read_aloud and deliveryMode none. 9) If user asks for new information and explicitly asks to read/speak it aloud, keep the route (text_task/weather_query/etc.) and set deliveryMode to tts. 10) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 11) If user asks about calendar events, schedule, appointments, meetings, or what's on calendar (e.g., 'what's on my calendar', 'list my events', 'what meetings do I have today'), choose calendar_list. 12) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
@@ -680,4 +688,108 @@ export async function runWebsiteReadFunctionCall(params: {
     "",
     summaryText,
   ].join("\n");
+}
+
+export async function runCalendarListFunctionCall(params: {
+  instruction: string;
+  activeApp: ActiveAppContext;
+}): Promise<string> {
+  const client = getGeminiClient();
+  const model = getGeminiFastModel();
+
+  const response = await client.models.generateContent({
+    model,
+    contents: [
+      `Instruction: ${params.instruction}`,
+      ...buildActiveAppPromptLines(params.activeApp),
+    ].join("\n"),
+    config: {
+      systemInstruction:
+        "You are Jarvis. For calendar requests, call list_calendar_events exactly once to retrieve calendar events. Do not answer without calling the function.",
+      tools: [
+        {
+          functionDeclarations: [
+            {
+              name: "list_calendar_events",
+              description:
+                "List upcoming events from Google Calendar. Returns events with their titles, times, and locations.",
+              parametersJsonSchema: {
+                type: "object",
+                properties: {
+                  timeframe: {
+                    type: "string",
+                    enum: ["today", "week", "upcoming"],
+                    description:
+                      "Timeframe for events: 'today' for today's events, 'week' for this week's events, 'upcoming' for next 10 events. Default is 'upcoming'.",
+                  },
+                  max_results: {
+                    type: "integer",
+                    description:
+                      "Maximum number of events to return (1-50). Default is 10.",
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+          ],
+        },
+      ],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: FunctionCallingConfigMode.ANY,
+          allowedFunctionNames: ["list_calendar_events"],
+        },
+      },
+      maxOutputTokens: 256,
+      candidateCount: 1,
+    },
+  });
+
+  const functionCall = response.functionCalls?.[0];
+  if (!functionCall || functionCall.name !== "list_calendar_events") {
+    throw new Error("Calendar function call was not produced by the model.");
+  }
+
+  const functionArgs = (functionCall.args ?? {}) as CalendarListFunctionArgs;
+  const timeframe =
+    typeof functionArgs.timeframe === "string"
+      ? functionArgs.timeframe
+      : "upcoming";
+  const maxResults =
+    typeof functionArgs.max_results === "number"
+      ? Math.min(Math.max(functionArgs.max_results, 1), 50)
+      : 10;
+
+  // Check authentication first
+  const isAuthenticated = await CalendarService.isAuthenticated();
+  if (!isAuthenticated) {
+    return [
+      "Not authenticated with Google Calendar.",
+      "",
+      "To use calendar features:",
+      "1. Set up Google Calendar API credentials",
+      "2. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to .env",
+      "3. Run authentication flow",
+      "",
+      "See README for detailed setup instructions.",
+    ].join("\n");
+  }
+
+  try {
+    let events;
+    if (timeframe === "today") {
+      events = await CalendarService.getTodayEvents();
+    } else if (timeframe === "week") {
+      events = await CalendarService.getWeekEvents();
+    } else {
+      events = await CalendarService.listUpcomingEvents(maxResults);
+    }
+
+    return CalendarService.formatEvents(events, timeframe);
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Failed to retrieve calendar events: ${error.message}`);
+    }
+    throw new Error("Failed to retrieve calendar events");
+  }
 }
