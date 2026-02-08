@@ -8,8 +8,9 @@ A clipboard-first AI desktop assistant for macOS that leverages Google Gemini, E
 - **Text Processing**: Intelligent text rewriting, explaining, and querying
 - **Image Generation & Editing**: Create and modify images using Gemini
 - **Image Analysis**: Explain and analyze clipboard images
-- **Background Removal**: Remove backgrounds from images (NEW!)
+- **Background Removal**: Remove backgrounds from images
 - **Weather Queries**: Get weather information for any location
+- **Google Calendar Integration**: List and view your calendar events (NEW!)
 - **Text-to-Speech**: Read text aloud using ElevenLabs
 - **Memory System**: Save and recall important user information
 - **Context-Aware**: Adapts tone and behavior based on active application
@@ -60,6 +61,11 @@ ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 
 # Required for background removal: Remove.bg API Key
 REMOVEBG_API_KEY=your_removebg_api_key_here
+
+# Optional: Google Calendar API (for calendar features)
+GOOGLE_CLIENT_ID=your_google_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_client_secret_here
+GOOGLE_REDIRECT_URI=http://localhost:3000/oauth2callback
 ```
 
 ### Getting API Keys
@@ -69,6 +75,7 @@ REMOVEBG_API_KEY=your_removebg_api_key_here
 3. **Weather API**: Get from [WeatherAPI.com](https://www.weatherapi.com/)
 4. **ElevenLabs API**: Get from [ElevenLabs](https://elevenlabs.io)
 5. **Remove.bg API**: Get from [Remove.bg](https://www.remove.bg/api) (50 free images/month)
+6. **Google Calendar API** (Optional): Follow the setup guide below
 
 ### Running the App
 
@@ -163,6 +170,60 @@ Jarvis will:
 - Free tier: 50 images/month
 - After free tier: $0.20/image
 
+### Google Calendar Feature
+
+Access and view your Google Calendar events with simple voice commands:
+
+#### Setup (One-time)
+
+1. **Create Google Cloud Project**:
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing one
+   - Enable the Google Calendar API
+
+2. **Create OAuth2 Credentials**:
+   - Go to "APIs & Services" → "Credentials"
+   - Click "Create Credentials" → "OAuth client ID"
+   - Choose "Desktop app" as application type
+   - Download the credentials JSON
+   - Copy `client_id` and `client_secret` to your `.env` file
+
+3. **Configure OAuth Consent Screen**:
+   - Add your email as a test user
+   - Add scope: `https://www.googleapis.com/auth/calendar.readonly`
+
+4. **Authenticate**:
+   - The first time you use a calendar command, you'll need to authenticate
+   - Follow the OAuth flow in your browser
+   - Grant read-only access to your calendar
+
+#### Usage
+
+Press **Alt+Space** and say:
+- "What's on my calendar today?"
+- "Show me my upcoming events"
+- "What meetings do I have this week?"
+- "List my calendar events"
+- "What's my schedule for today?"
+
+Jarvis will:
+- Connect to your Google Calendar
+- Retrieve your events
+- Display them in an easy-to-read format
+- Show event times, titles, and locations
+
+**Features:**
+- 📅 View today's, this week's, or upcoming events
+- 🔒 Read-only access (cannot modify your calendar)
+- ⏰ Smart time formatting (shows "Today at 2:00 PM")
+- 📍 Displays event locations when available
+- 🔄 Automatic token refresh for seamless access
+
+**Privacy:**
+- Only reads calendar data (cannot create or modify events)
+- Credentials stored locally and encrypted
+- No data sent to third parties
+
 ### Other Voice Commands
 
 - **Text Rewriting**: "Rewrite this more formally"
@@ -196,7 +257,8 @@ The app uses an intelligent router to determine the appropriate action:
 4. **image_explain**: Analyze and explain images
 5. **weather_query**: Fetch weather information
 6. **tts_read_aloud**: Read text aloud
-7. **background_remove**: Remove image backgrounds (NEW!)
+7. **background_remove**: Remove image backgrounds
+8. **calendar_list**: List calendar events (NEW!)
 
 ## Development
 
@@ -247,6 +309,15 @@ src/
 1. Grant microphone permissions when prompted
 2. Verify `GRADIUM_API_KEY` is correct
 3. Check internet connection
+
+### Google Calendar Not Working
+
+1. Verify `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set in `.env`
+2. Ensure Google Calendar API is enabled in your Google Cloud project
+3. Check that your OAuth consent screen is configured with test users
+4. Make sure the redirect URI matches: `http://localhost:3000/oauth2callback`
+5. Try re-authenticating by running the calendar authentication flow again
+6. Look at logs for API errors: `~/Library/Logs/jarvis-desktop-mvp/`
 
 ## Contributing
 

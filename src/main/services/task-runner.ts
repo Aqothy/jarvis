@@ -26,6 +26,7 @@ import {
   runDesktopOrganizeFunctionCall,
   runWeatherFunctionCall,
   runWebsiteReadFunctionCall,
+  runCalendarListFunctionCall,
   type TaskRouterRoute,
   transformImageToText,
   transformText,
@@ -494,6 +495,43 @@ export async function runTextTask(
       transformedText,
       promptMode: "direct_query",
       deliveryMode: webpageDeliveryMode,
+      inserted: deliveryResult.inserted,
+      copiedToClipboard: deliveryResult.copiedToClipboard,
+      fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
+      spokenByTts: deliveryResult.spokenByTts,
+      ttsPlaybackError: deliveryResult.ttsPlaybackError,
+    };
+  }
+
+  if (routerRoute === "calendar_list") {
+    let transformedText: string;
+    try {
+      transformedText = await runCalendarListFunctionCall({
+        instruction: routedInstruction,
+        activeApp: context.activeApp,
+      });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to retrieve calendar events";
+      transformedText = `Error: ${errorMessage}`;
+      notify("Jarvis", errorMessage);
+    }
+
+    const calendarDeliveryMode = routerDeliveryMode === "none" ? "clipboard" : routerDeliveryMode;
+    const deliveryResult = await deliverTextOutput({
+      transformedText,
+      deliveryMode: calendarDeliveryMode,
+      ttsEnabled,
+      ttsProvider,
+      transcript: request.instruction,
+      context,
+    });
+
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "direct_query",
+      deliveryMode: calendarDeliveryMode,
       inserted: deliveryResult.inserted,
       copiedToClipboard: deliveryResult.copiedToClipboard,
       fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,

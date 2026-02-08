@@ -18,5 +18,7 @@ export const IPC_CHANNELS = {
   overlayCopyContent: "assistant:overlay-copy-content",
   overlayDismiss: "assistant:overlay-dismiss",
   pushToTalkShortcut: "assistant:push-to-talk-shortcut",
-  pushToTalkDictationShortcut: "assistant:push-to-talk-dictation-shortcut"
+  pushToTalkDictationShortcut: "assistant:push-to-talk-dictation-shortcut",
+  calendarAuthenticate: "assistant:calendar-authenticate",
+  calendarCheckAuth: "assistant:calendar-check-auth"
 } as const;
