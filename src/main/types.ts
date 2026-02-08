@@ -35,7 +35,7 @@ export type TextPromptMode =
   | "direct_query"
   | "dictation_cleanup";
 
-export type TextDeliveryMode = "insert" | "clipboard" | "none";
+export type TextDeliveryMode = "insert" | "clipboard" | "none" | "tts";
 
 export interface TextTaskResult {
   context: ContextSnapshot;

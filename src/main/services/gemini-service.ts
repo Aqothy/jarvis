@@ -97,7 +97,8 @@ export type TaskRouterRoute =
   | "image_generate"
   | "image_explain"
   | "weather_query"
-  | "webpage_read";
+  | "webpage_read"
+  | "background_remove";
 
 interface TaskRouterRawResponse {
   route?: string;
@@ -114,7 +115,11 @@ export interface TaskRouterDecision {
 }
 
 function getDefaultDeliveryModeForRoute(route: TaskRouterRoute): TextDeliveryMode {
-  if (route === "image_edit" || route === "image_generate") {
+  if (
+    route === "image_edit" ||
+    route === "image_generate" ||
+    route === "background_remove"
+  ) {
     return "none";
   }
   return "clipboard";
@@ -146,7 +151,8 @@ function isTaskRouterRoute(value: string): value is TaskRouterRoute {
     value === "image_generate" ||
     value === "image_explain" ||
     value === "weather_query" ||
-    value === "webpage_read"
+    value === "webpage_read" ||
+    value === "background_remove"
   );
 }
 
@@ -186,7 +192,12 @@ function isTextPromptMode(value: string): value is TextPromptMode {
 }
 
 function isTextDeliveryMode(value: string): value is TextDeliveryMode {
-  return value === "insert" || value === "clipboard" || value === "none";
+  return (
+    value === "insert" ||
+    value === "clipboard" ||
+    value === "none" ||
+    value === "tts"
+  );
 }
 
 function parseTaskRouterDecision(
@@ -240,7 +251,7 @@ export async function routeTextTask(params: {
   const model = getGeminiRouterModel();
 
   const systemPrompt =
-    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit or image_explain unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read. 8) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
+    "You are a fast routing model for a desktop assistant. Return strict JSON only with keys: route, textMode, deliveryMode, rewrittenInstruction. route must be one of: text_task, image_edit, image_generate, image_explain, weather_query, webpage_read, background_remove. textMode must be one of: clipboard_rewrite, clipboard_explain, direct_query, dictation_cleanup. deliveryMode must be one of: insert, clipboard, none. Rules: 1) Use transcript + clipboard kind together. 2) Never choose image_edit, image_explain, or background_remove unless clipboard kind is image. 3) If user asks to edit/transform an existing image, choose image_edit and deliveryMode none. 4) If user asks to generate/create a new image (icon, logo, art, illustration, etc.), choose image_generate and deliveryMode none. 5) If user asks to explain/describe/analyze the current image, choose image_explain. 6) If user asks weather/forecast/temperature/rain/snow, choose weather_query. 7) If user asks to read, summarize, or explain the content of the current website/page/tab, choose webpage_read and deliveryMode clipboard. 8) If user asks to remove/delete/cut/erase the background from an image (e.g., 'remove background', 'transparent background'), choose background_remove and deliveryMode none. 9) For normal text requests choose text_task and set textMode+deliveryMode appropriately. Keep rewrittenInstruction concise and faithful to intent.";
   const userPrompt = [
     `Instruction transcript: ${params.instruction}`,
     `Clipboard kind: ${params.clipboardKind}`,
