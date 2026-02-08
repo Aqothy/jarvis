@@ -23,6 +23,7 @@ import { transformClipboardImage } from "./gemini-image-service";
 import { showResponseOverlay } from "./response-overlay-service";
 import {
   routeTextTask,
+  runDesktopOrganizeFunctionCall,
   runWeatherFunctionCall,
   runWebsiteReadFunctionCall,
   type TaskRouterRoute,
@@ -33,6 +34,7 @@ import { synthesizeAndPlay } from "./gradium-stt-service";
 import { WeatherService } from "./weather-service";
 import { ElevenLabsTtsService } from "./elevenlabs-tts-service";
 import { removeBackground } from "./background-removal-service";
+import { organizeDesktopByFileType } from "./desktop-organizer-service";
 import { getTtsEnabled, getTtsProvider } from "./tts-state-service";
 
 interface WeatherQuery {
@@ -183,6 +185,10 @@ function parseWeatherQuery(instruction: string): WeatherQuery {
 
 function requiresClipboardTextForMode(mode: TextPromptMode): boolean {
   return mode === "clipboard_rewrite" || mode === "clipboard_explain";
+}
+
+function pluralize(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural;
 }
 
 async function deliverTextOutput(params: {
@@ -493,6 +499,41 @@ export async function runTextTask(
       fallbackCopiedToClipboard: deliveryResult.fallbackCopiedToClipboard,
       spokenByTts: deliveryResult.spokenByTts,
       ttsPlaybackError: deliveryResult.ttsPlaybackError,
+    };
+  }
+
+  if (routerRoute === "desktop_organize") {
+    await runDesktopOrganizeFunctionCall({
+      instruction: routedInstruction,
+      activeApp: context.activeApp,
+    });
+
+    notify("Jarvis", "Organizing Desktop files...");
+    const result = await organizeDesktopByFileType();
+    const transformedText = [
+      "Desktop organization complete.",
+      `Moved ${result.moved} ${pluralize(result.moved, "file", "files")}.`,
+      `Skipped ${result.skippedConflicts} ${pluralize(result.skippedConflicts, "conflict", "conflicts")}.`,
+      `Scanned ${result.totalSeen} ${pluralize(result.totalSeen, "file", "files")}.`,
+    ].join(" ");
+
+    showTextResultOverlay({
+      text: transformedText,
+      transcript: request.instruction,
+      context,
+    });
+    notify("Jarvis", transformedText);
+
+    return {
+      context,
+      sourceText: "",
+      transformedText,
+      promptMode: "direct_query",
+      deliveryMode: "none",
+      inserted: false,
+      copiedToClipboard: false,
+      fallbackCopiedToClipboard: false,
+      spokenByTts: false,
     };
   }
 
